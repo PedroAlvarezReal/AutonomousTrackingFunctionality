@@ -52,9 +52,6 @@ class ObstacleDetector:
         self._prev_gray = None
         self._floor_baseline = None
         self._frame_count = 0
-        self._bg_subtractor = cv2.createBackgroundSubtractorMOG2(
-            history=60, varThreshold=40, detectShadows=False
-        )
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -129,25 +126,24 @@ class ObstacleDetector:
         return frame[y0:h, x0:x0 + rw]
 
     def _contour_score(self, region: np.ndarray) -> float:
-        """Detect large solid shapes — boxes, walls, chairs, people.
+        """Detect large solid objects that clearly stand out from the floor.
 
-        Uses adaptive thresholding + morphological closing to find blobs,
-        then scores by what fraction of the danger zone they fill.
+        Instead of adaptive thresholding (which finds noise everywhere),
+        we use strong Canny edges → dilate to connect them → find contours.
+        Only large, SOLID contours count — floor texture won't form big solid blobs.
         """
         gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+        blurred = cv2.GaussianBlur(gray, (9, 9), 0)
 
-        # Adaptive threshold handles varying lighting
-        thresh = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, 21, 5
-        )
+        # Strong Canny edges — high thresholds so only real boundaries show up
+        edges = cv2.Canny(blurred, threshold1=80, threshold2=200)
 
-        # Merge nearby blobs
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
-        closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+        # Dilate edges to connect nearby ones into solid shapes
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+        dilated = cv2.dilate(edges, kernel, iterations=2)
 
-        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Fill holes — a real obstacle forms a closed boundary
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return 0.0
 
@@ -158,18 +154,19 @@ class ObstacleDetector:
         if not big:
             return 0.0
 
+        # Only score if the biggest contour is really substantial
         largest_area = cv2.contourArea(max(big, key=cv2.contourArea))
-        return min(1.0, largest_area / (total_area * 0.40))
+        # Need to fill at least 15% of the zone to score 1.0
+        return min(1.0, largest_area / (total_area * 0.15))
 
     def _motion_score(self, region: np.ndarray) -> float:
-        """Detect movement via background subtraction + frame differencing.
+        """Detect movement via simple frame differencing only.
 
-        Flags people walking, rolling objects, anything that moves.
+        Background subtractor takes too long to stabilize.
+        Simple frame diff is immediate and reliable.
         """
-        fg_mask = self._bg_subtractor.apply(region)
-
         gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        gray = cv2.GaussianBlur(gray, (7, 7), 0)
 
         if self._prev_gray is None or self._prev_gray.shape != gray.shape:
             self._prev_gray = gray
@@ -179,42 +176,50 @@ class ObstacleDetector:
         self._prev_gray = gray
 
         _, thresh = cv2.threshold(diff, CAMERA_MOTION_THRESHOLD, 255, cv2.THRESH_BINARY)
-        combined = cv2.bitwise_or(fg_mask, thresh)
 
-        motion_ratio = np.count_nonzero(combined) / combined.size
-        return min(1.0, motion_ratio / 0.15)
+        motion_ratio = np.count_nonzero(thresh) / thresh.size
+        # Need 20% of pixels changing to score 1.0 — very generous
+        return min(1.0, motion_ratio / 0.20)
 
     def _color_anomaly_score(self, region: np.ndarray) -> float:
         """Detect obstacles by colour difference from the floor.
 
-        Learns the floor colour from the first 10 frames, then flags
-        anything that looks different.  Catches plain-coloured obstacles
-        that edge detection would miss entirely.
+        Only compares the MIDDLE band of the danger zone — not the top
+        (which sees background/walls) or the very bottom (which may see
+        the rover itself).  This reduces false positives massively.
         """
         hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-
-        # Bottom 30% of the region = floor reference
         h = region.shape[0]
-        floor_strip = hsv[int(h * 0.7):, :]
 
-        # Learn floor baseline from first 10 frames
-        if self._frame_count <= 10:
+        # Middle 40% of the danger zone (skip top 30% and bottom 30%)
+        check_strip = hsv[int(h * 0.3):int(h * 0.7), :]
+
+        # Floor reference = bottom 20% of the danger zone
+        floor_strip = hsv[int(h * 0.8):, :]
+
+        # Learn floor baseline from first 30 frames (more stable)
+        if self._frame_count <= 30:
             current_mean = np.mean(floor_strip, axis=(0, 1))
             if self._floor_baseline is None:
                 self._floor_baseline = current_mean
             else:
-                self._floor_baseline = 0.8 * self._floor_baseline + 0.2 * current_mean
+                self._floor_baseline = 0.9 * self._floor_baseline + 0.1 * current_mean
             return 0.0
 
         if self._floor_baseline is None:
             return 0.0
 
-        diff = np.abs(hsv.astype(float) - self._floor_baseline)
-        # Hue matters most, then saturation, then brightness
-        weighted = diff[:, :, 0] * 2.0 + diff[:, :, 1] * 1.0 + diff[:, :, 2] * 0.5
+        # Also continuously update the baseline slowly (adapts to lighting changes)
+        current_floor = np.mean(floor_strip, axis=(0, 1))
+        self._floor_baseline = 0.95 * self._floor_baseline + 0.05 * current_floor
+
+        diff = np.abs(check_strip.astype(float) - self._floor_baseline)
+        # Only saturation and value matter — hue wraps around and causes false positives
+        weighted = diff[:, :, 1] * 1.5 + diff[:, :, 2] * 1.0
 
         anomaly_ratio = np.count_nonzero(weighted > CAMERA_COLOR_DIFF_THRESHOLD) / weighted.size
-        return min(1.0, anomaly_ratio / 0.20)
+        # Need 30% anomalous pixels to score 1.0
+        return min(1.0, anomaly_ratio / 0.30)
 
     def _edge_density(self, region: np.ndarray) -> float:
         """Classic Canny edge density — kept as a minor signal."""
