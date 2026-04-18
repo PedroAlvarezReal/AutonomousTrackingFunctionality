@@ -1,82 +1,109 @@
+#!/usr/bin/env python3
+# ── rover/main.py ────────────────────────────────────────────────────────────
+# Phase 1: forward driving with collision avoidance.
+# GPS waypoint navigation is out of scope for this phase — see gps/ for that.
+#
+# Usage:   sudo python3 main.py
+# Ctrl+C or SIGTERM will stop the motors and release all resources cleanly.
+#
+# Loop rate is set by LOOP_HZ in config.py (default 10 Hz).
+# Each iteration prints one status line:
+#   🔊 42.3 cm | 👁 0.120 | CLEAR  → drive full speed (100%)
+#   🔊 38.0 cm | 👁 0.088 | SLOW   → drive slow (50%) | ultrasonic warn
+#   🔊 18.5 cm | 👁 N/A   | STOP   → stopped | ultrasonic critical
+#   🔊 TIMEOUT | 👁 N/A   | STOP   → stopped | sonar timeout
+
 import time
-from config import (
-    ARRIVAL_THRESHOLD,
-    HEADING_TOLERANCE,
-    SIMULATION_MODE
-)
-from gps.navigator import get_bearing, get_distance_meters, get_turn_error
+import signal
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(__file__))
+
 from motors.controller import MotorController
+from vision.safety     import SafetyMonitor, Decision
+from config            import LOOP_HZ, ULTRASONIC_HARD_STOP_CM, ULTRASONIC_WARN_CM, CAMERA_EDGE_THRESHOLD
 
-# ── Pin your target here ─────────────────────────────────────
-TARGET_LAT = 41.8819
-TARGET_LON = -87.6290
-# ─────────────────────────────────────────────────────────────
 
-def run():
-    motors = MotorController()
+def _reason(dist, density, decision) -> str:
+    """Build a short human-readable cause string for the status line."""
+    if dist is None:
+        return "sonar timeout"
+    if decision == Decision.STOP:
+        if dist < ULTRASONIC_HARD_STOP_CM:
+            return "ultrasonic critical"
+        if density is not None and density > CAMERA_EDGE_THRESHOLD:
+            return "camera obstacle"
+    if decision == Decision.SLOW:
+        return "ultrasonic warn"
+    return ""
 
-    # Swap between real GPS and simulator with one flag in config.py
-    if SIMULATION_MODE:
-        from gps.simulator import GPSSimulator
-        gps = GPSSimulator(start_lat=41.8827, start_lon=-87.6233)
-        print("Running in SIMULATION MODE")
-    else:
-        from gps.reader import GPSReader
-        gps = GPSReader()
-        print("Running with REAL GPS")
 
-    print(f"Target: ({TARGET_LAT}, {TARGET_LON})")
-    print(f"Arrival threshold: {ARRIVAL_THRESHOLD}m")
-    print("-" * 50)
+def main() -> None:
+    print("=== Autonomous rover — phase 1: collision avoidance ===")
+    print("Ctrl+C to stop safely.\n")
 
-    current_heading = 0.0  # starts facing North
+    # Both objects must be created before motors are allowed to spin.
+    # If either raises (bad GPIO number, no camera), the except block
+    # ensures we never enter the drive loop.
+    motors  = None
+    monitor = None
 
     try:
-        while True:
-            # 1 — Get current position
-            gps.update()
-            curr_lat, curr_lon = gps.get_position()
+        motors  = MotorController()
+        monitor = SafetyMonitor()
+    except Exception as exc:
+        print(f"FATAL: sensor/motor init failed — {exc}")
+        print("Motors will NOT run.  Fix the error and restart.")
+        if motors:
+            motors.close()
+        if monitor:
+            monitor.close()
+        sys.exit(1)
 
-            if curr_lat is None:
-                print("Waiting for GPS fix...")
-                time.sleep(1)
-                continue
+    running  = True
+    interval = 1.0 / LOOP_HZ
 
-            # 2 — Calculate distance and bearing to target
-            distance = get_distance_meters(curr_lat, curr_lon, TARGET_LAT, TARGET_LON)
-            bearing  = get_bearing(curr_lat, curr_lon, TARGET_LAT, TARGET_LON)
-            error    = get_turn_error(current_heading, bearing)
+    def _shutdown(sig, frame):
+        nonlocal running
+        running = False
 
-            print(f"({curr_lat:.6f}, {curr_lon:.6f}) | "
-                  f"{distance:.1f}m | "
-                  f"{bearing:.1f}° | "
-                  f"{error:+.1f}°")
+    signal.signal(signal.SIGINT,  _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
 
-            # 3 — Arrived?
-            if distance < ARRIVAL_THRESHOLD:
-                motors.stop()
-                print("\nArrived at target!")
-                break
+    try:
+        while running:
+            dist, density, decision, speed = monitor.evaluate()
 
-            # 4 — Need to turn?
-            if abs(error) > HEADING_TOLERANCE:
-                if error > 0:
-                    motors.turn_right()
-                else:
-                    motors.turn_left()
-                current_heading = bearing  # simulate turn completing
+            dist_str    = f"{dist:.1f} cm" if dist is not None else "TIMEOUT"
+            density_str = f"{density:.3f}" if density is not None else "N/A"
 
-            # 5 — Drive forward
+            if decision == Decision.CLEAR:
+                motors.drive_forward(speed)
+                label = f"drive full speed ({speed}%)"
+            elif decision == Decision.SLOW:
+                motors.drive_forward(speed)
+                label = f"drive slow ({speed}%)"
             else:
-                motors.drive_forward()
-                if SIMULATION_MODE:
-                    gps.move(bearing)  # advance simulated position
+                motors.stop()
+                label = "stopped"
 
-            time.sleep(0.2)
+            reason = _reason(dist, density, decision)
+            suffix = f" | {reason}" if reason else ""
 
-    except KeyboardInterrupt:
-        print("\nStopped by user.")
+            print(
+                f"🔊 {dist_str:<10} | 👁 {density_str} | "
+                f"{decision:<5} → {label}{suffix}"
+            )
+
+            time.sleep(interval)
+
+    finally:
         motors.stop()
+        motors.close()
+        monitor.close()
+        print("\nRover stopped. All resources released.")
 
-if __name__ == '__main__':
-    run()
+
+if __name__ == "__main__":
+    main()
