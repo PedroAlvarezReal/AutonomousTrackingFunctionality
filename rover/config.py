@@ -9,11 +9,15 @@ ULTRASONIC_HARD_STOP_CM = 25    # below this → hard stop, no questions asked
 ULTRASONIC_WARN_CM      = 60    # 25–60 cm → slow down, still moving
 ULTRASONIC_TIMEOUT_S    = 0.04  # no echo received within this window → treat as obstacle (fail safe)
 
-# Camera / edge detection
-CAMERA_EDGE_THRESHOLD    = 0.15  # fraction of pixels flagged as edges → obstacle present
+# Camera / multi-method obstacle detection
+# Combined score from contour + motion + colour + edge signals
+CAMERA_OBSTACLE_SCORE_THRESHOLD = 0.35  # 0.0–1.0 — combined score above this = obstacle
 CAMERA_REGION_HEIGHT_PCT = 0.40  # bottom 40 % of frame = the zone we're about to enter
 CAMERA_REGION_WIDTH_PCT  = 0.50  # centre 50 % horizontally (ignores peripheral clutter)
 CAMERA_INDEX             = 0     # /dev/video0
+CAMERA_CONTOUR_MIN_AREA_PCT = 0.02  # ignore contours smaller than 2% of danger zone (noise)
+CAMERA_MOTION_THRESHOLD     = 25    # pixel intensity diff to count as motion (0–255)
+CAMERA_COLOR_DIFF_THRESHOLD = 60    # weighted HSV diff to count as "not floor"
 
 # Motor speeds  (0–100 %)
 DRIVE_SPEED_FULL = 100

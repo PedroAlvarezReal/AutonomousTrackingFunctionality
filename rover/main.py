@@ -22,20 +22,23 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from motors.controller import MotorController
 from vision.safety     import SafetyMonitor, Decision
-from config            import LOOP_HZ, ULTRASONIC_HARD_STOP_CM, ULTRASONIC_WARN_CM, CAMERA_EDGE_THRESHOLD
+from config            import LOOP_HZ, ULTRASONIC_HARD_STOP_CM, ULTRASONIC_WARN_CM, CAMERA_OBSTACLE_SCORE_THRESHOLD
 
 
-def _reason(dist, density, decision) -> str:
+def _reason(dist, scores, decision) -> str:
     """Build a short human-readable cause string for the status line."""
     if dist is None:
         return "sonar timeout"
     if decision == Decision.STOP:
         if dist < ULTRASONIC_HARD_STOP_CM:
             return "ultrasonic critical"
-        if density is not None and density > CAMERA_EDGE_THRESHOLD:
-            return "camera obstacle"
+        if scores and scores['combined'] > CAMERA_OBSTACLE_SCORE_THRESHOLD:
+            return "camera + ultrasonic"
     if decision == Decision.SLOW:
-        return "ultrasonic warn"
+        if dist < ULTRASONIC_WARN_CM:
+            return "ultrasonic warn"
+        if scores and scores['combined'] > CAMERA_OBSTACLE_SCORE_THRESHOLD:
+            return "camera obstacle"
     return ""
 
 
@@ -73,10 +76,13 @@ def main() -> None:
 
     try:
         while running:
-            dist, density, decision, speed = monitor.evaluate()
+            dist, scores, decision, speed = monitor.evaluate()
 
-            dist_str    = f"{dist:.1f} cm" if dist is not None else "TIMEOUT"
-            density_str = f"{density:.3f}" if density is not None else "N/A"
+            dist_str = f"{dist:.1f} cm" if dist is not None else "TIMEOUT"
+            if scores:
+                score_str = f"C:{scores['contour']:.2f} M:{scores['motion']:.2f} L:{scores['color']:.2f} E:{scores['edge']:.2f} = {scores['combined']:.2f}"
+            else:
+                score_str = "N/A"
 
             if decision == Decision.CLEAR:
                 motors.drive_forward(speed)
@@ -88,11 +94,11 @@ def main() -> None:
                 motors.stop()
                 label = "stopped"
 
-            reason = _reason(dist, density, decision)
+            reason = _reason(dist, scores, decision)
             suffix = f" | {reason}" if reason else ""
 
             print(
-                f"🔊 {dist_str:<10} | 👁 {density_str} | "
+                f"🔊 {dist_str:<10} | 👁 {score_str} | "
                 f"{decision:<5} → {label}{suffix}"
             )
 
