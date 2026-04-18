@@ -52,8 +52,9 @@ PIN_ENA = -1   # GPIO_27 → pin 18  (Motor A enable, software PWM)
 PIN_ENB = -1   # GPIO_12 → pin 27  (Motor B enable, software PWM)
 
 # HC-SR04 ultrasonic sensor
-PIN_TRIG = 32  # GPIO_32 → pin 29
-PIN_ECHO = 33  # GPIO_33 → pin 31  (ECHO stepped down to 3.3 V via 1 kΩ + 2 kΩ divider)
+# sysfs number = gpiochip base (547) + GPIO offset
+PIN_TRIG = 579  # GPIO_32 → pin 29  (547 + 32)
+PIN_ECHO = 580  # GPIO_33 → pin 31  (547 + 33, ECHO stepped down to 3.3 V via 1 kΩ + 2 kΩ divider)
 
 # ─── Phase 2: GPS navigation (out of scope for phase 1) ──────────────────────
 GPS_PORT           = '/dev/ttyS0'
