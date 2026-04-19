@@ -15,7 +15,8 @@ def main() -> None:
     print(
         f"Heading IMU: {compass.core_name} "
         f"(WHO_AM_I=0x{compass.core_id:02X}, /dev/i2c-{compass.bus_id}, "
-        f"addr=0x{compass.address:02X}, mode={compass.mode}, {compass.mag_status})"
+        f"addr=0x{compass.address:02X}, mode={compass.mode}, "
+        f"gyro_axis={compass.gyro_axis_name}, {compass.mag_status})"
     )
     if compass.mode != "magnetometer":
         compass.seed_heading(0.0, absolute=False)
@@ -28,7 +29,7 @@ def main() -> None:
             if heading is not None:
                 print(
                     f"\rheading={heading:7.2f} deg  source={compass.nav_source:8s}  "
-                    f"gyro_z={compass.last_rate_dps:7.2f} dps",
+                    f"gyro_{compass.gyro_axis_name}={compass.last_rate_dps:7.2f} dps",
                     end="",
                     flush=True,
                 )

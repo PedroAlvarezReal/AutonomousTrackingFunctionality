@@ -24,10 +24,11 @@ from config import (
     HEADING_OFFSET_DEG,
     HEADING_SMOOTHING_ALPHA,
     MPU9250_ADDRESS,
+    MPU9250_GYRO_AXIS,
     MPU9250_GPS_CORRECTION_ALPHA,
     MPU9250_GYRO_BIAS_SAMPLES,
     MPU9250_GYRO_DEADBAND_DPS,
-    MPU9250_GYRO_Z_SIGN,
+    MPU9250_GYRO_SIGN,
     MPU9250_I2C_BUS,
     MPU9250_I2C_BUS_CANDIDATES,
     MPU9250_MAG_OFFSET_X,
@@ -50,7 +51,11 @@ class MPU9250Heading:
     MPU_USER_CTRL = 0x6A
     MPU_INT_PIN_CFG = 0x37
     MPU_WHO_AM_I = 0x75
-    MPU_GYRO_ZOUT_H = 0x47
+    GYRO_AXIS_REGS = {
+        "x": 0x43,
+        "y": 0x45,
+        "z": 0x47,
+    }
 
     AK_WHO_AM_I = 0x00
     AK_ST1 = 0x02
@@ -82,6 +87,8 @@ class MPU9250Heading:
         self._gyro_bias_dps = 0.0
         self._gyro_last_rate_dps = 0.0
         self._last_gyro_ts: float | None = None
+        self.gyro_axis_name = "z"
+        self._gyro_axis_reg = self.GYRO_AXIS_REGS["z"]
         self._configure()
 
     @property
@@ -139,6 +146,13 @@ class MPU9250Heading:
 
     def _configure(self) -> None:
         self.bus_id, self._bus, self.address = self._detect_mpu()
+        self.gyro_axis_name = str(MPU9250_GYRO_AXIS).strip().lower()
+        if self.gyro_axis_name not in self.GYRO_AXIS_REGS:
+            raise RuntimeError(
+                f"Invalid MPU9250_GYRO_AXIS={MPU9250_GYRO_AXIS!r}. "
+                f"Use one of: {', '.join(sorted(self.GYRO_AXIS_REGS))}."
+            )
+        self._gyro_axis_reg = self.GYRO_AXIS_REGS[self.gyro_axis_name]
 
         # Wake the IMU core and configure a steady gyro data stream.
         self._write_mpu(self.MPU_PWR_MGMT_1, 0x00)
@@ -266,10 +280,10 @@ class MPU9250Heading:
             f"Run `i2cdetect -a -y -r 0`, `1`, and `9` on the rover to see what is actually present."
         )
 
-    def _read_gyro_z_dps(self) -> float:
-        raw = self._read_mpu_block(self.MPU_GYRO_ZOUT_H, 2)
+    def _read_gyro_dps(self) -> float:
+        raw = self._read_mpu_block(self._gyro_axis_reg, 2)
         rate = self._to_signed(raw[0], raw[1]) / self.GYRO_SENSITIVITY_LSB_PER_DPS
-        rate *= MPU9250_GYRO_Z_SIGN
+        rate *= MPU9250_GYRO_SIGN
         rate -= self._gyro_bias_dps
         if abs(rate) < MPU9250_GYRO_DEADBAND_DPS:
             rate = 0.0
@@ -281,14 +295,14 @@ class MPU9250Heading:
         total = 0.0
         count = 0
         for _ in range(samples):
-            raw = self._read_mpu_block(self.MPU_GYRO_ZOUT_H, 2)
+            raw = self._read_mpu_block(self._gyro_axis_reg, 2)
             rate = self._to_signed(raw[0], raw[1]) / self.GYRO_SENSITIVITY_LSB_PER_DPS
-            rate *= MPU9250_GYRO_Z_SIGN
+            rate *= MPU9250_GYRO_SIGN
             total += rate
             count += 1
             time.sleep(0.004)
         if count == 0:
-            raise RuntimeError("Unable to read gyro Z axis for startup calibration.")
+            raise RuntimeError(f"Unable to read gyro {self.gyro_axis_name.upper()} axis for startup calibration.")
         return total / count
 
     def seed_heading(self, heading_deg: float, *, absolute: bool = False) -> float:
@@ -357,7 +371,7 @@ class MPU9250Heading:
 
     def _read_gyro_heading(self) -> float | None:
         now = time.monotonic()
-        rate = self._read_gyro_z_dps()
+        rate = self._read_gyro_dps()
         if self._last_gyro_ts is None:
             self._last_gyro_ts = now
             return self._heading

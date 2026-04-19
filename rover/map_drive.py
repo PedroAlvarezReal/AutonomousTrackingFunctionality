@@ -1531,6 +1531,7 @@ def main():
         print(
             f"Heading IMU: OK ({compass.core_name}, core WHO_AM_I=0x{compass.core_id:02X}, "
             f"/dev/i2c-{compass.bus_id} at 0x{compass.address:02X}, mode={compass.mode}, "
+            f"gyro_axis={compass.gyro_axis_name}, "
             f"{compass.mag_status}, gyro_bias={compass.gyro_bias_dps:.2f} dps)"
         )
     except Exception as exc:
