@@ -210,12 +210,21 @@ def _fuse(dist, scores):
     combined       = scores['combined'] if scores else 0.0
     camera_blocked = combined > CAMERA_OBSTACLE_SCORE_THRESHOLD
 
+    # Hard stop: obstacle very close
     if dist is not None and dist < ULTRASONIC_HARD_STOP_CM:
         return 'STOP', 0
+    # Both sensors agree: obstacle in warn zone
     if dist is not None and dist < ULTRASONIC_WARN_CM and camera_blocked:
         return 'STOP', 0
+    # Ultrasonic warn zone alone
     if dist is not None and dist < ULTRASONIC_WARN_CM:
         return 'SLOW', DRIVE_SPEED_SLOW
+    # Ultrasonic timeout — sensor unreliable, move slowly and rely on camera
+    if dist is None:
+        if camera_blocked:
+            return 'STOP', 0
+        return 'SLOW', DRIVE_SPEED_SLOW
+    # Camera sees something far away
     if camera_blocked:
         return 'SLOW', DRIVE_SPEED_SLOW
     return 'CLEAR', DRIVE_SPEED_FULL
@@ -227,10 +236,8 @@ def _scan_and_turn(motors, sweep):
     print("Scanning for best direction...")
 
     readings = sweep.quick_scan()
-    left_cm   = readings.get(0,   0) or 0
-    center_cm = readings.get(90,  0) or 0
-    right_cm  = readings.get(180, 0) or 0
-    print(f"  Left={left_cm} cm  Center={center_cm} cm  Right={right_cm} cm")
+    def _fmt(v): return f"{v} cm" if v is not None else "N/A"
+    print(f"  Left={_fmt(readings.get(0))}  Center={_fmt(readings.get(90))}  Right={_fmt(readings.get(180))}")
 
     with shared_lock:
         shared['servo_angle'] = 90  # back to straight after sweep
