@@ -26,37 +26,21 @@ DRIVE_SPEED_SLOW = 50
 # Main loop rate
 LOOP_HZ = 10
 
-# Software PWM carrier frequency for ENA/ENB lines
-# sysfs GPIO can't do hardware PWM, so we toggle in a thread at this rate.
-PWM_FREQUENCY_HZ = 500   # 500 Hz is plenty for L298N speed control
+# ─── Arduino serial (motor control) ──────────────────────────────────────────
+# The Rubik Pi sends text commands over USB to an Arduino Uno, which drives
+# the L298N H-bridge.  The Pi does NOT touch motor pins directly.
+#
+# Wiring:  Pi USB-A port  ──USB cable──►  Arduino USB-B port
+#   (this also powers the Arduino from the Pi)
+#
+# Find the port on the Pi with:   ls /dev/ttyACM* /dev/ttyUSB*
+ARDUINO_SERIAL_PORT = "/dev/ttyUSB0"     # Arduino Uno via USB
+ARDUINO_BAUD_RATE   = 9600
 
-# ─── GPIO pin mapping ─────────────────────────────────────────────────────────
-# Every PIN_* constant is the sysfs GPIO number that gets written to
-# /sys/class/gpio/export.  These are NOT the physical pin numbers.
-#
-# HOW TO FIND YOUR SYSFS NUMBERS on the Rubik Pi 3:
-#   sudo cat /sys/kernel/debug/gpio
-# Look for lines like:
-#   gpio-NNN (GPIO_8): ...
-# The NNN is what goes below.
-#
-# Alternatively:  gpioinfo   (from libgpiod-tools)
-#
-# Column guide:
-#   Constant   GPIO name  Physical pin   sysfs number
-# ─────────────────────────────────────────────────────
-# TODO: replace every -1 with the real number from your board.
-
-# L298N motor driver
-PIN_IN1 = -1   # GPIO_8  → pin 11
-PIN_IN2 = -1   # GPIO_24 → pin 13
-PIN_IN3 = -1   # GPIO_25 → pin 15
-PIN_IN4 = -1   # GPIO_26 → pin 16
-PIN_ENA = -1   # GPIO_27 → pin 18  (Motor A enable, software PWM)
-PIN_ENB = -1   # GPIO_12 → pin 27  (Motor B enable, software PWM)
+# ─── GPIO pin mapping (Rubik Pi 3 sysfs) ─────────────────────────────────────
+# sysfs number = gpiochip base (547) + GPIO offset
 
 # HC-SR04 ultrasonic sensor
-# sysfs number = gpiochip base (547) + GPIO offset
 PIN_TRIG = 579  # GPIO_32 → pin 29  (547 + 32)
 PIN_ECHO = 580  # GPIO_33 → pin 31  (547 + 33, ECHO stepped down to 3.3 V via 1 kΩ + 2 kΩ divider)
 
