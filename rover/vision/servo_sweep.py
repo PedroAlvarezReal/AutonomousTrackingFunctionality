@@ -2,8 +2,8 @@
 
 import time
 import logging
-from rover.motors.controller import MotorController
-from rover.vision.ultrasonic import UltrasonicSensor
+from motors.controller import MotorController
+from vision.ultrasonic import UltrasonicSensor
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class ServoSweep:
         readings: dict[int, float | None] = {}
         for ang in angles:
             self.set_angle(ang)
-            dist = self.us.read_distance()
+            dist = self.us.read_cm()
             readings[ang] = dist
             log.debug("sweep %3d° → %s cm", ang, dist)
 
