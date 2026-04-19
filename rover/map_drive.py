@@ -581,14 +581,36 @@ body{
   pointer-events:none;
 }
 #rover-pin{
-  width:18px;
-  height:18px;
-  margin-left:-9px;
-  margin-top:-9px;
+  width:28px;
+  height:28px;
+  margin-left:-14px;
+  margin-top:-14px;
+  transform-origin:center center;
+}
+#rover-pin::before{
+  content:"";
+  position:absolute;
+  left:50%;
+  top:2px;
+  width:0;
+  height:0;
+  transform:translateX(-50%);
+  border-left:8px solid transparent;
+  border-right:8px solid transparent;
+  border-bottom:16px solid #0f766e;
+  filter:drop-shadow(0 2px 4px rgba(0,0,0,0.18));
+}
+#rover-pin::after{
+  content:"";
+  position:absolute;
+  left:50%;
+  top:12px;
+  width:10px;
+  height:10px;
+  transform:translateX(-50%);
   border-radius:50%;
   background:#14b8a6;
-  border:3px solid #0f766e;
-  box-shadow:0 0 0 3px rgba(255,255,255,0.7);
+  border:2px solid rgba(255,255,255,0.92);
 }
 #target-pin{
   width:20px;
@@ -743,7 +765,7 @@ body{
     <section class="panel">
       <div class="panel-head">
         <div class="panel-title">Map</div>
-        <div class="panel-note">Self-contained click map</div>
+        <div class="panel-note">North-up map with rover heading</div>
       </div>
       <div class="map-wrap">
         <div id="map">
@@ -774,13 +796,13 @@ body{
           <div class="slider-block">
             <div class="slider-label">
               <span>Warn / Slow</span>
-              <strong id="warn-value">35 cm</strong>
+              <strong id="warn-value">28 cm</strong>
             </div>
-            <input id="warn-slider" class="slider" type="range" min="10" max="120" step="1" value="35" />
+            <input id="warn-slider" class="slider" type="range" min="10" max="120" step="1" value="28" />
           </div>
           <span class="hint">Slides update the rover live. Warn stays at least 5 cm above hard stop.</span>
         </div>
-        <span class="hint" id="clickinfo">Tap map to set a target</span>
+        <span class="hint" id="clickinfo">Tap map to set a target. Arrow shows rover facing.</span>
       </div>
     </section>
 
@@ -997,6 +1019,10 @@ function placePin(el, lat, lon, anchorBottom){
 function renderPins(){
   placePin(roverPin, rover.lat, rover.lon, false);
   placePin(targetPin, rover.target_lat, rover.target_lon, true);
+  if (!roverPin.hidden){
+    roverPin.style.transform = `rotate(${rover.heading || 0}deg)`;
+    roverPin.style.opacity = rover.heading_valid ? '1' : '0.5';
+  }
 }
 
 function renderMap(){
@@ -1022,6 +1048,20 @@ function fmtDistance(){
 function fmtObstacle(){
   if(rover.us_dist === null){ return 'N/A'; }
   return `${rover.us_dist.toFixed(0)} cm`;
+}
+
+function approxDistanceMeters(lat1, lon1, lat2, lon2){
+  const meanLat = ((lat1 + lat2) / 2) * Math.PI / 180;
+  const north = (lat2 - lat1) * 111320.0;
+  const east = (lon2 - lon1) * 111320.0 * Math.cos(meanLat);
+  return Math.hypot(east, north);
+}
+
+function approxBearingDeg(lat1, lon1, lat2, lon2){
+  const meanLat = ((lat1 + lat2) / 2) * Math.PI / 180;
+  const north = (lat2 - lat1) * 111320.0;
+  const east = (lon2 - lon1) * 111320.0 * Math.cos(meanLat);
+  return (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
 }
 
 function centerOnRover(){
@@ -1061,8 +1101,15 @@ mapEl.addEventListener('click', async (e) => {
   rover.target_lat = target.lat;
   rover.target_lon = target.lon;
   renderPins();
-  document.getElementById('clickinfo').textContent =
-    `Target set at ${target.lat.toFixed(6)}, ${target.lon.toFixed(6)}`;
+  if (rover.lat !== null && rover.lon !== null){
+    const dist = approxDistanceMeters(rover.lat, rover.lon, target.lat, target.lon);
+    const bearing = approxBearingDeg(rover.lat, rover.lon, target.lat, target.lon);
+    document.getElementById('clickinfo').textContent =
+      `Target ${dist.toFixed(1)} m away at bearing ${bearing.toFixed(0)} deg`;
+  } else {
+    document.getElementById('clickinfo').textContent =
+      `Target set at ${target.lat.toFixed(6)}, ${target.lon.toFixed(6)}`;
+  }
   mapStatus.textContent = 'Sending target to rover...';
 
   try{
