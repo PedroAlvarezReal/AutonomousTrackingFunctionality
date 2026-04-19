@@ -25,6 +25,7 @@ from motors.controller import MotorController
 from vision.ultrasonic  import UltrasonicSensor
 from config import (
     LOOP_HZ, CAMERA_INDEX,
+    ULTRASONIC_ENABLED,
     ULTRASONIC_HARD_STOP_CM, ULTRASONIC_WARN_CM,
     ULTRASONIC_FILTER_SAMPLES,
     DRIVE_SPEED_FULL, DRIVE_SPEED_SLOW,
@@ -66,6 +67,7 @@ nav = {
     'target_y': None,
     'dist_to_target': None,
     'us_dist': None,               # forward ultrasonic reading used for cruise decisions
+    'ultrasonic_enabled': ULTRASONIC_ENABLED,
     'us_hard_stop_cm': ULTRASONIC_HARD_STOP_CM,
     'us_warn_cm': ULTRASONIC_WARN_CM,
     'servo_angle': 90,
@@ -855,6 +857,7 @@ let rover = {
   heading_source:'unknown',
   decision:'IDLE',
   us_dist:null,
+  ultrasonic_enabled:false,
   us_hard_stop_cm:15,
   us_warn_cm:28,
   x:0,
@@ -1046,6 +1049,7 @@ function fmtDistance(){
 }
 
 function fmtObstacle(){
+  if(!rover.ultrasonic_enabled){ return 'OFF'; }
   if(rover.us_dist === null){ return 'N/A'; }
   return `${rover.us_dist.toFixed(0)} cm`;
 }
@@ -1250,6 +1254,7 @@ class _Handler(BaseHTTPRequestHandler):
                     'target_y':       nav['target_y'],
                     'dist_to_target': nav['dist_to_target'],
                     'us_dist':        nav['us_dist'],
+                    'ultrasonic_enabled': nav['ultrasonic_enabled'],
                     'us_hard_stop_cm': nav['us_hard_stop_cm'],
                     'us_warn_cm':      nav['us_warn_cm'],
                     'decision':       nav['decision'],
@@ -1373,12 +1378,13 @@ def _drive_loop(motors, sonar, heading_sensor=None):
             tx        = nav['target_x']
             ty        = nav['target_y']
             front_dist = nav['us_dist']
+            ultrasonic_enabled = nav['ultrasonic_enabled']
             hard_stop_cm = nav['us_hard_stop_cm']
             warn_cm = nav['us_warn_cm']
 
         # ── Obstacle check ────────────────────────────────────────────────────
-        obstacle_stop = front_dist is not None and front_dist < hard_stop_cm
-        obstacle_slow = front_dist is not None and front_dist < warn_cm
+        obstacle_stop = ultrasonic_enabled and front_dist is not None and front_dist < hard_stop_cm
+        obstacle_slow = ultrasonic_enabled and front_dist is not None and front_dist < warn_cm
 
         # ── No target → idle ──────────────────────────────────────────────────
         if target_lat is None and tx is None:
@@ -1589,12 +1595,20 @@ def main():
         print(f"Motors: unavailable ({exc})")
         print("Starting UI-only mode. Map and camera stay available.")
 
-    try:
-        sonar = UltrasonicSensor()
-        print("Ultrasonic: OK")
-    except Exception as exc:
+    if ULTRASONIC_ENABLED:
+        try:
+            sonar = UltrasonicSensor()
+            print("Ultrasonic: OK")
+        except Exception as exc:
+            sonar = _NullUltrasonicSensor()
+            with nav_lock:
+                nav['ultrasonic_enabled'] = False
+            print(f"Ultrasonic: unavailable ({exc})")
+    else:
         sonar = _NullUltrasonicSensor()
-        print(f"Ultrasonic: unavailable ({exc})")
+        with nav_lock:
+            nav['ultrasonic_enabled'] = False
+        print("Ultrasonic: disabled for GPS-only navigation test")
 
     try:
         gps = GPSReader()
@@ -1627,7 +1641,7 @@ def main():
     else:
         print("Camera: not found")
 
-    if drive_enabled:
+    if drive_enabled and ULTRASONIC_ENABLED:
         Thread(target=_sweep_loop,  args=(motors, sonar), daemon=True).start()
     if gps is not None:
         Thread(target=_gps_loop, args=(gps, compass), daemon=True).start()
