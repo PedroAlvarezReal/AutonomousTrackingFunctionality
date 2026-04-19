@@ -50,19 +50,27 @@ class UltrasonicSensor:
     """
 
     def __init__(self) -> None:
-        _export(PIN_TRIG, "out")
-        _export(PIN_ECHO, "in")
-
         self._trig = f"{_GPIO_ROOT}/gpio{PIN_TRIG}/value"
         self._echo = f"{_GPIO_ROOT}/gpio{PIN_ECHO}/value"
+        self._setup_gpio()
+
+    def _setup_gpio(self) -> None:
+        _export(PIN_TRIG, "out")
+        _export(PIN_ECHO, "in")
 
         # settle the trigger line; the sensor ignores spurious pulses
         # during the first 50 ms after power-on
         _write(self._trig, 0)
         time.sleep(0.05)
 
-    def read_cm(self) -> float | None:
-        """Return distance in centimetres, or None if echo timed out."""
+    def _ensure_ready(self) -> None:
+        if os.path.exists(self._trig) and os.path.exists(self._echo):
+            return
+        self._setup_gpio()
+
+    def _read_cm_once(self) -> float | None:
+        self._ensure_ready()
+
         # send the 10 µs trigger pulse
         _write(self._trig, 1)
         time.sleep(0.00001)
@@ -87,7 +95,30 @@ class UltrasonicSensor:
         # speed of sound ≈ 34 300 cm/s; divide by 2 for round-trip
         return round((pulse_end - pulse_start) * 17150, 1)
 
+    def read_cm(self) -> float | None:
+        """Return distance in centimetres, or None if echo timed out."""
+        try:
+            return self._read_cm_once()
+        except (FileNotFoundError, OSError):
+            # Some runs lose the sysfs node mid-flight. Re-export once and
+            # retry so navigation does not crash on a transient GPIO reset.
+            try:
+                self._setup_gpio()
+                return self._read_cm_once()
+            except Exception:
+                return None
+
     def close(self) -> None:
-        _write(self._trig, 0)
-        _unexport(PIN_TRIG)
-        _unexport(PIN_ECHO)
+        try:
+            if os.path.exists(self._trig):
+                _write(self._trig, 0)
+        except Exception:
+            pass
+        try:
+            _unexport(PIN_TRIG)
+        except Exception:
+            pass
+        try:
+            _unexport(PIN_ECHO)
+        except Exception:
+            pass

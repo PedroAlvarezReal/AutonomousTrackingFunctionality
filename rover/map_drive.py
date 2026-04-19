@@ -189,7 +189,10 @@ def _read_sonar_filtered(sonar, samples=ULTRASONIC_FILTER_SAMPLES):
     """Median-filter a few quick sonar reads to suppress one-off spikes."""
     values = []
     for _ in range(max(1, int(samples))):
-        dist = sonar.read_cm()
+        try:
+            dist = sonar.read_cm()
+        except Exception:
+            dist = None
         if dist is not None and dist > 0:
             values.append(float(dist))
         time.sleep(0.01)
