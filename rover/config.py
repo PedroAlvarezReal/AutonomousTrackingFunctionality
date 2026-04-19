@@ -5,7 +5,7 @@
 # ─── Phase 1: Collision avoidance ────────────────────────────────────────────
 
 # Ultrasonic thresholds
-ULTRASONIC_ENABLED      = False # disable sonar completely while tuning GPS-to-target movement
+ULTRASONIC_ENABLED      = True  # re-enabled; drive logic now handles heading acquisition separately
 ULTRASONIC_HARD_STOP_CM = 15    # below this → hard stop, no questions asked
 ULTRASONIC_WARN_CM      = 28    # 15–28 cm → slow down, still moving
 ULTRASONIC_TIMEOUT_S    = 0.04  # no echo received within this window → treat as obstacle (fail safe)

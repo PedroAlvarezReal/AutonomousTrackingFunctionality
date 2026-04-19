@@ -50,7 +50,7 @@ TURN_PREFERENCE_CM     = 12.0
 THRESHOLD_MIN_CM       = 5
 THRESHOLD_MAX_CM       = 120
 THRESHOLD_GAP_CM       = 5
-GPS_HEADING_MIN_MOVE_M = 0.50
+GPS_HEADING_MIN_MOVE_M = 0.30
 
 # ── Shared state ──────────────────────────────────────────────────────────────
 nav = {
@@ -302,6 +302,7 @@ def _camera_loop(cap):
                'TURN':    (0,   170, 255),
                'IDLE':    (128, 128, 128),
                'WAIT_GPS': (180, 180, 0),
+               'ACQUIRE_HEADING': (0, 200, 200),
                'WAIT_HEADING': (180, 120, 0)}.get(decision, (0, 255, 0))
 
         # Decision banner
@@ -874,6 +875,7 @@ const decisionColors = {
   ARRIVED:'#0f766e',
   UI_ONLY:'#a16207',
   WAIT_GPS:'#a16207',
+  ACQUIRE_HEADING:'#0891b2',
   WAIT_HEADING:'#b45309'
 };
 
@@ -1415,21 +1417,17 @@ def _drive_loop(motors, sonar, heading_sensor=None):
             bearing = _bearing(x, y, tx, ty)
 
         h_error = _heading_error(heading, bearing)
+        acquire_heading = False
+        acquire_speed_pct = DRIVE_SPEED_SLOW if dist_to_target < 0.8 else DRIVE_SPEED_FULL
 
         with nav_lock:
             nav['dist_to_target'] = dist_to_target
             if not heading_valid:
                 if imu_enabled and heading_sensor is not None:
-                    try:
-                        seeded_heading = heading_sensor.seed_heading(bearing, absolute=False)
-                    except Exception:
-                        seeded_heading = None
-                    if seeded_heading is not None:
-                        nav['heading'] = seeded_heading
-                        nav['heading_valid'] = True
-                        nav['heading_source'] = heading_sensor.nav_source
-                        heading = seeded_heading
-                        h_error = _heading_error(heading, bearing)
+                    if None not in (lat, lon, target_lat, target_lon):
+                        nav['decision'] = 'ACQUIRE_HEADING'
+                        nav['heading_source'] = 'unknown'
+                        acquire_heading = True
                     else:
                         nav['decision'] = 'WAIT_HEADING'
                         nav['heading_source'] = 'unknown'
@@ -1437,17 +1435,29 @@ def _drive_loop(motors, sonar, heading_sensor=None):
                         time.sleep(interval)
                         continue
                 elif imu_enabled:
-                    nav['decision'] = 'WAIT_HEADING'
-                    nav['heading_source'] = 'unknown'
-                    motors.stop()
-                    time.sleep(interval)
-                    continue
+                    if None not in (lat, lon, target_lat, target_lon):
+                        nav['decision'] = 'ACQUIRE_HEADING'
+                        nav['heading_source'] = 'unknown'
+                        acquire_heading = True
+                    else:
+                        nav['decision'] = 'WAIT_HEADING'
+                        nav['heading_source'] = 'unknown'
+                        motors.stop()
+                        time.sleep(interval)
+                        continue
                 else:
                     nav['heading'] = bearing
                     nav['heading_valid'] = True
                     nav['heading_source'] = 'estimated'
                     heading = bearing
                     h_error = 0.0
+
+        if acquire_heading:
+            motors.drive_forward(acquire_speed_pct)
+            with nav_lock:
+                nav['decision'] = 'ACQUIRE_HEADING'
+            time.sleep(interval)
+            continue
 
         preferred_turn = None
         if h_error < -HEADING_TOL:
