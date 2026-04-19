@@ -54,14 +54,13 @@ def main() -> None:
 
     try:
         motors  = MotorController()
-        monitor = SafetyMonitor()
+        try:
+            monitor = SafetyMonitor()
+        except Exception as exc:
+            print(f"⚠️  Sensors unavailable ({exc}) — running MOTORS ONLY mode")
+            monitor = None
     except Exception as exc:
-        print(f"FATAL: sensor/motor init failed — {exc}")
-        print("Motors will NOT run.  Fix the error and restart.")
-        if motors:
-            motors.close()
-        if monitor:
-            monitor.close()
+        print(f"FATAL: motor init failed — {exc}")
         sys.exit(1)
 
     running  = True
@@ -76,38 +75,44 @@ def main() -> None:
 
     try:
         while running:
-            dist, scores, decision, speed = monitor.evaluate()
+            if monitor:
+                dist, scores, decision, speed = monitor.evaluate()
 
-            dist_str = f"{dist:.1f} cm" if dist is not None else "TIMEOUT"
-            if scores:
-                score_str = f"C:{scores['contour']:.2f} M:{scores['motion']:.2f} L:{scores['color']:.2f} E:{scores['edge']:.2f} = {scores['combined']:.2f}"
+                dist_str = f"{dist:.1f} cm" if dist is not None else "TIMEOUT"
+                if scores:
+                    score_str = f"C:{scores['contour']:.2f} M:{scores['motion']:.2f} L:{scores['color']:.2f} E:{scores['edge']:.2f} = {scores['combined']:.2f}"
+                else:
+                    score_str = "N/A"
+
+                if decision == Decision.CLEAR:
+                    motors.drive_forward(speed)
+                    label = f"drive full speed ({speed}%)"
+                elif decision == Decision.SLOW:
+                    motors.drive_forward(speed)
+                    label = f"drive slow ({speed}%)"
+                else:
+                    motors.stop()
+                    label = "stopped"
+
+                reason = _reason(dist, scores, decision)
+                suffix = f" | {reason}" if reason else ""
+
+                print(
+                    f"🔊 {dist_str:<10} | 👁 {score_str} | "
+                    f"{decision:<5} → {label}{suffix}"
+                )
             else:
-                score_str = "N/A"
-
-            if decision == Decision.CLEAR:
-                motors.drive_forward(speed)
-                label = f"drive full speed ({speed}%)"
-            elif decision == Decision.SLOW:
-                motors.drive_forward(speed)
-                label = f"drive slow ({speed}%)"
-            else:
-                motors.stop()
-                label = "stopped"
-
-            reason = _reason(dist, scores, decision)
-            suffix = f" | {reason}" if reason else ""
-
-            print(
-                f"🔊 {dist_str:<10} | 👁 {score_str} | "
-                f"{decision:<5} → {label}{suffix}"
-            )
+                # Motors-only mode: just drive forward
+                motors.drive_forward(100)
+                print("🚗 MOTORS ONLY — driving forward (no sensors)")
 
             time.sleep(interval)
 
     finally:
         motors.stop()
         motors.close()
-        monitor.close()
+        if monitor:
+            monitor.close()
         print("\nRover stopped. All resources released.")
 
 
