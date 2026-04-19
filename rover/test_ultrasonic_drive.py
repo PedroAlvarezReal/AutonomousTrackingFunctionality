@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 # ── rover/test_ultrasonic_drive.py ───────────────────────────────────────────
-# Ultrasonic-only drive test.
-# Motor decisions come from ultrasonic distance alone — no camera detection.
-# Camera runs as a plain live stream (no scoring, no obstacle logic).
-#
-#   > 60 cm  → FORWARD full speed
-#   25-60 cm → FORWARD slow
-#   < 25 cm  → STOP
+# Ultrasonic-only drive test with continuous servo sweep.
+# Servo sweeps left/center/right while driving so obstacles are seen early.
+# Camera is plain live stream — no detection logic.
 #
 # Stream: http://10.10.10.90:8080
 # Usage:  sudo /home/ubuntu/AutonomousTrackingFunctionality/venv/bin/python3 test_ultrasonic_drive.py
@@ -34,14 +30,56 @@ from config import (
 
 STREAM_PORT = 8080
 
-shared = {'distance': None, 'decision': 'INIT', 'speed': 0}
+# Sweep angles: left=45, center=90, right=135
+# (not full 0/180 — keeps sensing relevant to the direction of travel)
+SWEEP_ANGLES = [45, 90, 135]
+SETTLE_S     = 0.15   # seconds for servo to reach position + sensor to stabilise
+
+shared = {
+    'readings':  {45: None, 90: None, 135: None},  # angle → distance
+    'min_dist':  None,   # closest reading across all angles
+    'servo_angle': 90,
+    'decision':  'INIT',
+    'speed':     0,
+}
 shared_lock  = Lock()
 latest_frame = None
 frame_lock   = Lock()
 _running     = True
+_sweep_pause = False   # drive loop sets True during backup/turn so sweep waits
 
 
-# ── Camera thread — live view only, no detection ──────────────────────────────
+# ── Sweep thread — continuously reads left/center/right ──────────────────────
+
+def _sweep_loop(motors, sonar):
+    global _running, _sweep_pause
+    idx = 0
+    while _running:
+        if _sweep_pause:
+            time.sleep(0.05)
+            continue
+
+        angle = SWEEP_ANGLES[idx % len(SWEEP_ANGLES)]
+        motors.send_command(f"V{angle}")
+        time.sleep(SETTLE_S)
+
+        if _sweep_pause:   # check again after settle
+            idx += 1
+            continue
+
+        dist = sonar.read_cm()
+
+        with shared_lock:
+            shared['readings'][angle] = dist
+            shared['servo_angle']     = angle
+            # min_dist = closest valid reading (ignore None / timeouts)
+            valid = [d for d in shared['readings'].values() if d is not None]
+            shared['min_dist'] = min(valid) if valid else None
+
+        idx += 1
+
+
+# ── Camera thread — live view only ───────────────────────────────────────────
 
 def _camera_loop(cap):
     global latest_frame, _running
@@ -52,32 +90,38 @@ def _camera_loop(cap):
             continue
 
         with shared_lock:
-            dist     = shared['distance']
-            decision = shared['decision']
-            speed    = shared['speed']
+            readings  = dict(shared['readings'])
+            angle     = shared['servo_angle']
+            min_dist  = shared['min_dist']
+            decision  = shared['decision']
+            speed     = shared['speed']
 
         h, w = frame.shape[:2]
 
-        # Decision banner
         col = (0, 0, 255) if decision == 'STOP' else (0, 165, 255) if decision == 'SLOW' else (0, 255, 0)
         label = f"{decision}  {speed}%" if speed else decision
         cv2.putText(frame, label, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.2, col, 3)
 
-        # Distance top-right
-        if dist is not None:
-            dist_str = f"{dist:.0f} cm"
-            dist_col = (0, 0, 255) if dist < ULTRASONIC_HARD_STOP_CM else (
-                       (0, 165, 255) if dist < ULTRASONIC_WARN_CM else (0, 255, 0))
-        else:
-            dist_str, dist_col = "TIMEOUT", (128, 128, 128)
-        cv2.putText(frame, dist_str, (w - 180, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, dist_col, 2)
+        # Per-angle readings on the right
+        y = 35
+        for a in SWEEP_ANGLES:
+            d = readings.get(a)
+            tag = f"{'L' if a==45 else 'C' if a==90 else 'R'} ({a}deg): "
+            tag += f"{d:.0f}cm" if d is not None else "N/A"
+            a_col = (200, 200, 0) if a == angle else (150, 150, 150)
+            cv2.putText(frame, tag, (w - 200, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, a_col, 1)
+            y += 22
 
-        # Distance bar at bottom
+        # Min distance bar at bottom
         bar_x, bar_y, bar_w = 10, h - 25, w - 20
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + 15), (50, 50, 50), -1)
-        if dist is not None:
-            frac = min(dist / 200.0, 1.0)
+        if min_dist is not None:
+            dist_col = (0, 0, 255) if min_dist < ULTRASONIC_HARD_STOP_CM else (
+                       (0, 165, 255) if min_dist < ULTRASONIC_WARN_CM else (0, 255, 0))
+            frac = min(min_dist / 200.0, 1.0)
             cv2.rectangle(frame, (bar_x, bar_y), (bar_x + int(frac * bar_w), bar_y + 15), dist_col, -1)
+            cv2.putText(frame, f"min:{min_dist:.0f}cm", (bar_x + 5, bar_y - 3),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, dist_col, 1)
             for thresh, tlabel in [(ULTRASONIC_HARD_STOP_CM, "STOP"), (ULTRASONIC_WARN_CM, "SLOW")]:
                 tx = bar_x + int((thresh / 200.0) * bar_w)
                 cv2.line(frame, (tx, bar_y), (tx, bar_y + 15), (255, 255, 255), 1)
@@ -104,9 +148,9 @@ class _StreamHandler(BaseHTTPRequestHandler):
   h1{color:#00ff88} p{color:#aaa;margin:4px;font-size:13px}
   img{border:2px solid #00ff88;max-width:95vw}
 </style></head><body>
-  <h1>Ultrasonic Drive Test</h1>
-  <p>Green = FORWARD | Orange = SLOW | Red = STOP</p>
-  <p>Camera is live view only - no detection running</p>
+  <h1>Ultrasonic Sweep Drive</h1>
+  <p>Green = FORWARD | Orange = SLOW | Red = STOP+turn</p>
+  <p>L/C/R = left(45)/center(90)/right(135) sweep readings</p>
   <img src="/stream"/>
 </body></html>""")
         elif self.path == "/stream":
@@ -132,12 +176,21 @@ class _StreamHandler(BaseHTTPRequestHandler):
         pass
 
 
+# ── Avoidance: pick best turn direction from sweep readings ───────────────────
+
+def _best_turn(readings):
+    """Return 'left' or 'right' based on which side has more clearance."""
+    left  = readings.get(45)  or 0
+    right = readings.get(135) or 0
+    return 'left' if left >= right else 'right'
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    global _running
+    global _running, _sweep_pause
 
-    print("=== Ultrasonic-only drive test ===")
+    print("=== Ultrasonic sweep drive test ===")
     print(f"Stream: http://10.10.10.90:{STREAM_PORT}")
     print("Ctrl+C to stop.\n")
 
@@ -148,17 +201,19 @@ def main():
     print("Ultrasonic: OK")
 
     cap = cv2.VideoCapture(CAMERA_INDEX)
-    if not cap.isOpened():
-        print("Camera: FAILED — stream will be blank")
-    else:
+    if cap.isOpened():
         for _ in range(5):
             cap.read()
-        print("Camera: OK (live view only)\n")
+        print("Camera: OK (live view only)")
+    else:
+        print("Camera: not found — stream blank")
 
-    Thread(target=_camera_loop, args=(cap,), daemon=True).start()
+    Thread(target=_sweep_loop,  args=(motors, sonar), daemon=True).start()
+    Thread(target=_camera_loop, args=(cap,),           daemon=True).start()
 
     server = HTTPServer(("0.0.0.0", STREAM_PORT), _StreamHandler)
     Thread(target=server.serve_forever, daemon=True).start()
+    print()
 
     def _shutdown(sig, frame):
         global _running
@@ -167,54 +222,60 @@ def main():
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    interval  = 1.0 / LOOP_HZ
-    turn_dir  = 1   # alternates: 1 = left, -1 = right
+    interval = 1.0 / LOOP_HZ
 
     try:
         while _running:
-            dist = sonar.read_cm()
+            with shared_lock:
+                min_dist = shared['min_dist']
+                readings = dict(shared['readings'])
 
-            if dist is not None and dist < ULTRASONIC_HARD_STOP_CM:
+            if min_dist is not None and min_dist < ULTRASONIC_HARD_STOP_CM:
                 decision, speed = 'STOP', 0
-            elif dist is not None and dist < ULTRASONIC_WARN_CM:
+            elif min_dist is not None and min_dist < ULTRASONIC_WARN_CM:
                 decision, speed = 'SLOW', DRIVE_SPEED_SLOW
             else:
                 decision, speed = 'CLEAR', DRIVE_SPEED_FULL
 
             with shared_lock:
-                shared['distance'] = dist
                 shared['decision'] = decision
                 shared['speed']    = speed
 
-            dist_str = f"{dist:.1f} cm" if dist is not None else "TIMEOUT"
-
             if decision == 'STOP':
-                # Back up briefly, then turn away from obstacle
-                print(f"{dist_str:<10} | OBSTACLE — backing up and turning")
+                _sweep_pause = True
+                turn = _best_turn(readings)
+                print(f"min={min_dist:.1f}cm | OBSTACLE — back up + turn {turn.upper()}")
+
                 motors.drive_backward()
                 time.sleep(0.4)
-                if turn_dir == 1:
+                if turn == 'left':
                     motors.turn_left()
-                    print("Turning LEFT")
                 else:
                     motors.turn_right()
-                    print("Turning RIGHT")
                 time.sleep(0.6)
                 motors.stop()
-                turn_dir *= -1   # alternate direction each time
-                continue         # re-evaluate immediately
+
+                # Re-centre servo and resume sweep
+                motors.send_command("V90")
+                time.sleep(0.2)
+                # Clear stale readings so old values don't re-trigger immediately
+                with shared_lock:
+                    shared['readings'] = {45: None, 90: None, 135: None}
+                    shared['min_dist'] = None
+                _sweep_pause = False
+                continue
 
             elif decision == 'SLOW':
                 motors.drive_forward(speed)
-                print(f"{dist_str:<10} | SLOW")
+                print(f"min={min_dist:.1f}cm | SLOW")
             else:
                 motors.drive_forward(speed)
-                print(f"{dist_str:<10} | FORWARD")
 
             time.sleep(interval)
 
     finally:
         _running = False
+        _sweep_pause = False
         motors.send_command("V90")
         motors.stop()
         motors.close()
