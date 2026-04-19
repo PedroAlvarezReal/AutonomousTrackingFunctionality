@@ -5,8 +5,8 @@
 # ─── Phase 1: Collision avoidance ────────────────────────────────────────────
 
 # Ultrasonic thresholds
-ULTRASONIC_HARD_STOP_CM = 25    # below this → hard stop, no questions asked
-ULTRASONIC_WARN_CM      = 60    # 25–60 cm → slow down, still moving
+ULTRASONIC_HARD_STOP_CM = 15    # below this → hard stop, no questions asked
+ULTRASONIC_WARN_CM      = 35    # 15–35 cm → slow down, still moving
 ULTRASONIC_TIMEOUT_S    = 0.04  # no echo received within this window → treat as obstacle (fail safe)
 
 # Camera / multi-method obstacle detection
@@ -33,7 +33,7 @@ LOOP_HZ = 10
 #   (this also powers the Arduino from the Pi)
 #
 # Find the port on the Pi with:   ls /dev/ttyACM* /dev/ttyUSB*
-ARDUINO_SERIAL_PORT = "/dev/ttyUSB0"     # Arduino Uno via USB
+ARDUINO_SERIAL_PORT = "/dev/ttyACM0"     # Arduino Uno via USB
 ARDUINO_BAUD_RATE   = 9600
 
 # ─── GPIO pin mapping (Rubik Pi 3 sysfs) ─────────────────────────────────────

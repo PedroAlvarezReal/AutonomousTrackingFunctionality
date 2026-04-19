@@ -17,7 +17,10 @@
 #
 # The Arduino echoes "OK\n" after each command (optional, not waited on).
 
+import glob
+import os
 import serial
+import threading
 import time
 
 from config import ARDUINO_SERIAL_PORT, ARDUINO_BAUD_RATE
@@ -31,12 +34,32 @@ class MotorController:
     the L298N H-bridge accordingly.  See arduino/motor_driver.ino.
     """
 
+    @staticmethod
+    def _resolve_port() -> str:
+        """
+        Prefer the configured serial port, but fall back to common Arduino
+        USB device paths when Linux enumerates the adapter differently.
+        """
+        if ARDUINO_SERIAL_PORT and os.path.exists(ARDUINO_SERIAL_PORT):
+            return ARDUINO_SERIAL_PORT
+
+        candidates = sorted(glob.glob("/dev/ttyUSB*")) + sorted(glob.glob("/dev/ttyACM*"))
+        if candidates:
+            return candidates[0]
+
+        raise serial.SerialException(
+            f"Arduino serial port not found. Tried {ARDUINO_SERIAL_PORT!r}, /dev/ttyUSB*, /dev/ttyACM*"
+        )
+
     def __init__(self) -> None:
+        port = self._resolve_port()
         self._ser = serial.Serial(
-            port=ARDUINO_SERIAL_PORT,
+            port=port,
             baudrate=ARDUINO_BAUD_RATE,
             timeout=1.0,
         )
+        self.port = port
+        self._lock = threading.Lock()
         # Arduino resets when USB-serial connects — wait for it to boot
         time.sleep(2.0)
         self._ser.reset_input_buffer()
@@ -45,7 +68,8 @@ class MotorController:
 
     def _send(self, cmd: str) -> None:
         """Send a command string to the Arduino."""
-        self._ser.write(f"{cmd}\n".encode())
+        with self._lock:
+            self._ser.write(f"{cmd}\n".encode())
 
     def send_command(self, cmd: str) -> None:
         """Public wrapper for sending arbitrary commands (e.g. servo)."""
