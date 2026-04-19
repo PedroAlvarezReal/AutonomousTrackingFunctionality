@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from gps.reader import GPSReader
 from gps.navigator import get_bearing, get_distance_meters
-from imu.mpu9250 import MPU9250Compass
+from imu.mpu9250 import MPU9250Heading
 from motors.controller import MotorController
 from vision.ultrasonic  import UltrasonicSensor
 from config import (
@@ -48,6 +48,7 @@ TURN_PREFERENCE_CM     = 12.0
 THRESHOLD_MIN_CM       = 5
 THRESHOLD_MAX_CM       = 120
 THRESHOLD_GAP_CM       = 5
+GPS_HEADING_MIN_MOVE_M = 0.50
 
 # ── Shared state ──────────────────────────────────────────────────────────────
 nav = {
@@ -123,6 +124,10 @@ def _bearing(x1, y1, x2, y2):
 def _heading_error(current, target):
     """Signed heading error in degrees. Negative = turn left, positive = turn right."""
     return (target - current + 180) % 360 - 180
+
+
+def _heading_is_imu_source(source):
+    return isinstance(source, str) and source.startswith('imu')
 
 
 def _add_trail(x, y):
@@ -304,19 +309,38 @@ def _camera_loop(cap):
             latest_frame = frame
 
 
-def _gps_loop(gps):
+def _gps_loop(gps, heading_sensor=None):
     global _running
     prev_fix = None
     while _running:
         if gps.update():
             lat, lon = gps.get_position()
+            gps_heading = None
+            corrected_heading = None
+            corrected_source = None
+
+            if prev_fix is not None:
+                prev_lat, prev_lon = prev_fix
+                east_m, north_m = _latlon_offset_m(prev_lat, prev_lon, lat, lon)
+                moved_m = math.hypot(east_m, north_m)
+                if moved_m >= GPS_HEADING_MIN_MOVE_M:
+                    gps_heading = _bearing_from_latlon(prev_lat, prev_lon, lat, lon)
+
+            if gps_heading is not None and heading_sensor is not None:
+                try:
+                    corrected_heading = heading_sensor.correct_heading(gps_heading)
+                    corrected_source = heading_sensor.nav_source
+                except Exception:
+                    corrected_heading = None
+
             with nav_lock:
-                if prev_fix is not None:
-                    prev_lat, prev_lon = prev_fix
-                    east_m, north_m = _latlon_offset_m(prev_lat, prev_lon, lat, lon)
-                    moved_m = math.hypot(east_m, north_m)
-                    if moved_m >= 0.75 and nav['heading_source'] != 'imu':
-                        nav['heading'] = _bearing_from_latlon(prev_lat, prev_lon, lat, lon)
+                if gps_heading is not None:
+                    if corrected_heading is not None:
+                        nav['heading'] = corrected_heading
+                        nav['heading_valid'] = True
+                        nav['heading_source'] = corrected_source
+                    elif not _heading_is_imu_source(nav['heading_source']):
+                        nav['heading'] = gps_heading
                         nav['heading_valid'] = True
                         nav['heading_source'] = 'gps'
                 nav['lat'] = lat
@@ -339,7 +363,7 @@ def _imu_loop(compass):
             with nav_lock:
                 nav['heading'] = heading
                 nav['heading_valid'] = True
-                nav['heading_source'] = 'imu'
+                nav['heading_source'] = compass.nav_source
         time.sleep(0.05)
 
 
@@ -1222,7 +1246,7 @@ class _Handler(BaseHTTPRequestHandler):
             with nav_lock:
                 nav['x'] = 0.0
                 nav['y'] = 0.0
-                if nav['heading_source'] != 'imu':
+                if not _heading_is_imu_source(nav['heading_source']):
                     nav['heading'] = 0.0
                     nav['heading_valid'] = False
                     nav['heading_source'] = 'unknown'
@@ -1256,7 +1280,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 # ── Drive loop ────────────────────────────────────────────────────────────────
 
-def _drive_loop(motors, sonar):
+def _drive_loop(motors, sonar, heading_sensor=None):
     global _running, _sweep_pause
 
     interval  = 1.0 / LOOP_HZ
@@ -1319,17 +1343,35 @@ def _drive_loop(motors, sonar):
         with nav_lock:
             nav['dist_to_target'] = dist_to_target
             if not heading_valid:
-                if imu_enabled:
+                if imu_enabled and heading_sensor is not None:
+                    try:
+                        seeded_heading = heading_sensor.seed_heading(bearing, absolute=False)
+                    except Exception:
+                        seeded_heading = None
+                    if seeded_heading is not None:
+                        nav['heading'] = seeded_heading
+                        nav['heading_valid'] = True
+                        nav['heading_source'] = heading_sensor.nav_source
+                        heading = seeded_heading
+                        h_error = _heading_error(heading, bearing)
+                    else:
+                        nav['decision'] = 'WAIT_HEADING'
+                        nav['heading_source'] = 'unknown'
+                        motors.stop()
+                        time.sleep(interval)
+                        continue
+                elif imu_enabled:
                     nav['decision'] = 'WAIT_HEADING'
                     nav['heading_source'] = 'unknown'
                     motors.stop()
                     time.sleep(interval)
                     continue
-                nav['heading'] = bearing
-                nav['heading_valid'] = True
-                nav['heading_source'] = 'estimated'
-                heading = bearing
-                h_error = 0.0
+                else:
+                    nav['heading'] = bearing
+                    nav['heading_valid'] = True
+                    nav['heading_source'] = 'estimated'
+                    heading = bearing
+                    h_error = 0.0
 
         preferred_turn = None
         if h_error < -HEADING_TOL:
@@ -1379,7 +1421,7 @@ def _drive_loop(motors, sonar):
                 if turn == 'left':
                     motors.turn_left()
                     with nav_lock:
-                        if nav['heading_source'] != 'imu':
+                        if not _heading_is_imu_source(nav['heading_source']):
                             nav['heading'] = (nav['heading'] - TURN_DPS * AVOID_TURN_S) % 360
                             nav['heading_valid'] = True
                             nav['heading_source'] = 'estimated'
@@ -1387,7 +1429,7 @@ def _drive_loop(motors, sonar):
                 else:
                     motors.turn_right()
                     with nav_lock:
-                        if nav['heading_source'] != 'imu':
+                        if not _heading_is_imu_source(nav['heading_source']):
                             nav['heading'] = (nav['heading'] + TURN_DPS * AVOID_TURN_S) % 360
                             nav['heading_valid'] = True
                             nav['heading_source'] = 'estimated'
@@ -1411,7 +1453,7 @@ def _drive_loop(motors, sonar):
             if h_error < 0:
                 motors.turn_left()
                 with nav_lock:
-                    if nav['heading_source'] != 'imu':
+                    if not _heading_is_imu_source(nav['heading_source']):
                         nav['heading'] = (nav['heading'] - TURN_DPS * dt) % 360
                         nav['heading_valid'] = True
                         nav['heading_source'] = 'estimated'
@@ -1419,7 +1461,7 @@ def _drive_loop(motors, sonar):
             else:
                 motors.turn_right()
                 with nav_lock:
-                    if nav['heading_source'] != 'imu':
+                    if not _heading_is_imu_source(nav['heading_source']):
                         nav['heading'] = (nav['heading'] + TURN_DPS * dt) % 360
                         nav['heading_valid'] = True
                         nav['heading_source'] = 'estimated'
@@ -1483,12 +1525,13 @@ def main():
         print(f"GPS: unavailable ({exc})")
 
     try:
-        compass = MPU9250Compass()
+        compass = MPU9250Heading()
         with nav_lock:
             nav['imu_enabled'] = True
         print(
             f"Heading IMU: OK ({compass.core_name}, core WHO_AM_I=0x{compass.core_id:02X}, "
-            f"/dev/i2c-{compass.bus_id} at 0x{compass.address:02X})"
+            f"/dev/i2c-{compass.bus_id} at 0x{compass.address:02X}, mode={compass.mode}, "
+            f"{compass.mag_status}, gyro_bias={compass.gyro_bias_dps:.2f} dps)"
         )
     except Exception as exc:
         compass = None
@@ -1507,7 +1550,7 @@ def main():
     if drive_enabled:
         Thread(target=_sweep_loop,  args=(motors, sonar), daemon=True).start()
     if gps is not None:
-        Thread(target=_gps_loop, args=(gps,), daemon=True).start()
+        Thread(target=_gps_loop, args=(gps, compass), daemon=True).start()
     if compass is not None:
         Thread(target=_imu_loop, args=(compass,), daemon=True).start()
     Thread(target=_camera_loop, args=(cap,),           daemon=True).start()
@@ -1526,7 +1569,7 @@ def main():
 
     try:
         if drive_enabled:
-            _drive_loop(motors, sonar)
+            _drive_loop(motors, sonar, compass)
         else:
             while _running:
                 time.sleep(0.25)

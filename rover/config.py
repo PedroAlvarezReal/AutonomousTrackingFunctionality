@@ -43,7 +43,7 @@ ARDUINO_BAUD_RATE   = 9600
 PIN_TRIG = 579  # GPIO_32 → pin 29  (547 + 32)
 PIN_ECHO = 580  # GPIO_33 → pin 31  (547 + 33, ECHO stepped down to 3.3 V via 1 kΩ + 2 kΩ divider)
 
-# ─── MPU-9250 compass heading ────────────────────────────────────────────────
+# ─── MPU-9250 / MPU-6500 heading ─────────────────────────────────────────────
 # Wiring:
 #   VCC -> Pin 1  (3V3)
 #   GND -> Pin 14 (GND)
@@ -62,6 +62,10 @@ MPU9250_MAG_OFFSET_Z         = 0.0
 MPU9250_MAG_SCALE_X          = 1.0   # soft-iron scale corrections
 MPU9250_MAG_SCALE_Y          = 1.0
 MPU9250_MAG_SCALE_Z          = 1.0
+MPU9250_GYRO_Z_SIGN          = -1.0  # flip to 1.0 if heading updates backward when you turn
+MPU9250_GYRO_BIAS_SAMPLES    = 240   # keep rover still during startup for clean bias calibration
+MPU9250_GYRO_DEADBAND_DPS    = 0.8   # ignore tiny stationary drift after bias removal
+MPU9250_GPS_CORRECTION_ALPHA = 0.75  # blend GPS course into gyro heading when rover is moving
 
 # ─── Phase 2: GPS navigation (out of scope for phase 1) ──────────────────────
 GPS_PORT           = '/dev/ttyHS2'
