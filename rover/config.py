@@ -44,7 +44,7 @@ PIN_TRIG = 579  # GPIO_32 → pin 29  (547 + 32)
 PIN_ECHO = 580  # GPIO_33 → pin 31  (547 + 33, ECHO stepped down to 3.3 V via 1 kΩ + 2 kΩ divider)
 
 # ─── Phase 2: GPS navigation (out of scope for phase 1) ──────────────────────
-GPS_PORT           = '/dev/ttyS0'
+GPS_PORT           = '/dev/ttyHS2'
 GPS_BAUD           = 9600
 ARRIVAL_THRESHOLD  = 2.5   # metres — how close counts as "arrived"
 HEADING_TOLERANCE  = 10    # degrees off-bearing before we correct
