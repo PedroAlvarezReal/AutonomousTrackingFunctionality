@@ -49,11 +49,18 @@ class MPU9250Compass:
     AK_CNTL1 = 0x0A
     AK_CNTL2 = 0x0B
     AK_ASAX = 0x10
+    VALID_CORE_IDS = {
+        0x70: "MPU-6500 / MPU-9250 clone",
+        0x71: "MPU-9250",
+        0x73: "MPU-9255 / compatible",
+    }
 
     def __init__(self) -> None:
         self.bus_id = None
         self._bus = None
         self.address = None
+        self.core_id = None
+        self.core_name = "unknown"
         self._asa = (1.0, 1.0, 1.0)
         self._heading = None
         self._configure()
@@ -104,16 +111,22 @@ class MPU9250Compass:
         self._write_mpu(self.MPU_INT_PIN_CFG, 0x02)
         time.sleep(0.01)
 
-        mpu_id = self._read_mpu(self.MPU_WHO_AM_I)
-        if mpu_id not in (0x71, 0x73):
-            raise RuntimeError(f"Unexpected MPU-9250 WHO_AM_I value: 0x{mpu_id:02X}")
+        self.core_id = self._read_mpu(self.MPU_WHO_AM_I)
+        self.core_name = self.VALID_CORE_IDS.get(self.core_id, "unknown")
+        if self.core_id not in self.VALID_CORE_IDS:
+            raise RuntimeError(
+                f"Unexpected IMU WHO_AM_I value: 0x{self.core_id:02X}. "
+                f"Expected one of {', '.join(f'0x{k:02X}' for k in sorted(self.VALID_CORE_IDS))}."
+            )
 
-        mag_id = self._read_mag(self.AK_WHO_AM_I)
+        mag_id = self._probe_mag_id()
         if mag_id != 0x48:
             raise RuntimeError(
-                f"MPU-9250 responded at 0x{self.address:02X}, but AK8963 magnetometer at 0x{AK8963_ADDRESS:02X} "
-                f"did not respond correctly (WHO_AM_I=0x{mag_id:02X}). Check the module wiring and make sure "
-                f"the breakout really exposes the MPU-9250 compass."
+                f"IMU core {self.core_name} responded on /dev/i2c-{self.bus_id} at 0x{self.address:02X} "
+                f"(WHO_AM_I=0x{self.core_id:02X}), but the AK8963 magnetometer at 0x{AK8963_ADDRESS:02X} "
+                f"did not respond correctly (WHO_AM_I=0x{mag_id:02X}). This usually means the board is an "
+                f"MPU-6500/clone without a compass, or the breakout needs extra pins such as CS/nCS, VDDIO, "
+                f"or AD0 wired correctly."
             )
 
         # Power down before switching AK8963 modes.
@@ -131,6 +144,23 @@ class MPU9250Compass:
         time.sleep(0.01)
         self._write_mag(self.AK_CNTL1, 0x16)
         time.sleep(0.01)
+
+    def _probe_mag_id(self) -> int:
+        # Some boards need a moment after bypass mode is enabled before the
+        # embedded AK8963 answers on 0x0C.
+        last_error = None
+        for _ in range(8):
+            try:
+                return self._read_mag(self.AK_WHO_AM_I)
+            except OSError as exc:
+                last_error = exc
+                time.sleep(0.02)
+        if last_error is not None:
+            raise RuntimeError(
+                f"Unable to talk to AK8963 magnetometer at 0x{AK8963_ADDRESS:02X} after enabling bypass: "
+                f"{last_error}"
+            )
+        return 0x00
 
     def _candidate_buses(self) -> list[int]:
         candidates = []
@@ -173,12 +203,13 @@ class MPU9250Compass:
                 except OSError as exc:
                     last_error = exc
                     continue
-                if who_am_i in (0x71, 0x73):
+                if who_am_i in self.VALID_CORE_IDS:
                     return bus_id, bus, address
                 bus.close()
                 raise RuntimeError(
                     f"I2C device answered on /dev/i2c-{bus_id} at 0x{address:02X}, "
-                    f"but WHO_AM_I was 0x{who_am_i:02X} instead of 0x71/0x73."
+                    f"but WHO_AM_I was 0x{who_am_i:02X} instead of one of "
+                    f"{', '.join(f'0x{k:02X}' for k in sorted(self.VALID_CORE_IDS))}."
                 )
 
             bus.close()

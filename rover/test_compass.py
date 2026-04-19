@@ -12,6 +12,10 @@ from imu.mpu9250 import MPU9250Compass
 
 def main() -> None:
     compass = MPU9250Compass()
+    print(
+        f"Compass core: {compass.core_name} "
+        f"(WHO_AM_I=0x{compass.core_id:02X}, /dev/i2c-{compass.bus_id}, addr=0x{compass.address:02X})"
+    )
     print("Starting compass heading test. Press Ctrl+C to stop.")
     try:
         while True:
@@ -27,4 +31,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
