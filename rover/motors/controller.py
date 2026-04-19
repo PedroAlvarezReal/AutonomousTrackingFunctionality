@@ -47,6 +47,10 @@ class MotorController:
         """Send a command string to the Arduino."""
         self._ser.write(f"{cmd}\n".encode())
 
+    def send_command(self, cmd: str) -> None:
+        """Public wrapper for sending arbitrary commands (e.g. servo)."""
+        self._send(cmd)
+
     def drive_forward(self, speed_pct: float = 100) -> None:
         """Drive both motors forward at speed_pct (0–100)."""
         speed = int(max(0, min(100, speed_pct)))
