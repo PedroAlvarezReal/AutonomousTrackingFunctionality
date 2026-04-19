@@ -172,7 +172,7 @@ class _StreamHandler(BaseHTTPRequestHandler):
   img{border:2px solid #00ff88;max-width:95vw}
   p{color:#aaa;margin:4px;font-size:13px}
 </style></head><body>
-  <h1>Rover — Autonomous Drive</h1>
+  <h1>Rover - Autonomous Drive</h1>
   <p>Green = CLEAR (full speed) | Orange = SLOW | Red = STOP + scan</p>
   <p>Bottom bar = ultrasonic distance | Scores = camera detection</p>
   <img src="/stream"/>
