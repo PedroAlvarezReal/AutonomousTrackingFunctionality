@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 # ── rover/test_motors.py ─────────────────────────────────────────────────────
-# Drives both motors forward for 2 seconds then stops.
-# Run this FIRST to confirm wiring before connecting any sensors.
+# Sends serial commands to Arduino Uno to test all motor directions.
+# The Arduino drives the L298N H-bridge.
 #
-# Usage:   sudo python3 test_motors.py
-# Sudo required: sysfs GPIO export needs root on most Linux configs.
-#
-# If a motor spins the wrong direction, swap the two wires at that motor's
-# L298N output terminals (OUT1/OUT2 or OUT3/OUT4) — do NOT change the code.
+# Usage:   python3 test_motors.py
 
 import time
 import sys
@@ -19,17 +15,47 @@ from motors.controller import MotorController
 
 
 def main() -> None:
-    print("=== Motor test ===")
-    print("Driving forward at full speed for 2 seconds...")
+    print("=== Motor test (Arduino USB serial) ===")
+    print("⚠️  MOTORS WILL SPIN — lift wheels off the ground!\n")
+    time.sleep(2)
 
     motors = MotorController()
     try:
-        motors.drive_forward(100)
+        print("▶ FORWARD (2s)")
+        motors.drive_forward()
         time.sleep(2)
-    finally:
+
+        print("▶ STOP (1s)")
         motors.stop()
+        time.sleep(1)
+
+        print("▶ BACKWARD (2s)")
+        motors.drive_backward()
+        time.sleep(2)
+
+        print("▶ STOP (1s)")
+        motors.stop()
+        time.sleep(1)
+
+        print("▶ LEFT (1.5s)")
+        motors.turn_left()
+        time.sleep(1.5)
+
+        print("▶ STOP (0.5s)")
+        motors.stop()
+        time.sleep(0.5)
+
+        print("▶ RIGHT (1.5s)")
+        motors.turn_right()
+        time.sleep(1.5)
+
+        print("▶ STOP")
+        motors.stop()
+
+    finally:
         motors.close()
-        print("Stopped. GPIO released.")
+
+    print("\n✅ Motor test complete!")
 
 
 if __name__ == "__main__":
