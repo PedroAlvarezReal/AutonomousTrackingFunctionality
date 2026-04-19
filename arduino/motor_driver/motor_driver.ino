@@ -33,11 +33,11 @@ Servo sweepServo;
 
 // ── Motor orientation ─────────────────────────────────────────────────────────
 // The two rear motors are mirror-mounted so one must be logically inverted.
-// If the rover circles LEFT  → set REVERSE_MOTOR_B 1 (try this first)
-// If the rover circles RIGHT → set REVERSE_MOTOR_B 0 and REVERSE_MOTOR_A 1
-// If it still circles after either change, swap the two wires on that motor.
-#define REVERSE_MOTOR_A 0
-#define REVERSE_MOTOR_B 1
+// Try REVERSE_MOTOR_A 1 / REVERSE_MOTOR_B 0 first.
+// If rover still circles the other way, try REVERSE_MOTOR_A 0 / REVERSE_MOTOR_B 1.
+// If it still circles after both, swap the two wires on one motor physically.
+#define REVERSE_MOTOR_A 1
+#define REVERSE_MOTOR_B 0
 
 // Macro: resolve actual HIGH/LOW for a pin given inversion flag
 #define PIN_A(a, b, rev) digitalWrite(in1, (rev) ? (b) : (a)); digitalWrite(in2, (rev) ? (a) : (b))
