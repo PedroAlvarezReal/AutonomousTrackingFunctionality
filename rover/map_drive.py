@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from gps.reader import GPSReader
 from gps.navigator import get_bearing, get_distance_meters
+from imu.mpu9250 import MPU9250Compass
 from motors.controller import MotorController
 from vision.ultrasonic  import UltrasonicSensor
 from config import (
@@ -53,6 +54,8 @@ nav = {
     'x': 0.0, 'y': 0.0,           # position in metres from start
     'heading': 0.0,                # degrees: 0=North, 90=East, 180=South, 270=West
     'heading_valid': False,
+    'heading_source': 'unknown',
+    'imu_enabled': False,
     'lat': None,
     'lon': None,
     'target_lat': None,
@@ -268,7 +271,8 @@ def _camera_loop(cap):
                'ARRIVED': (0,   255, 136),
                'TURN':    (0,   170, 255),
                'IDLE':    (128, 128, 128),
-               'WAIT_GPS': (180, 180, 0)}.get(decision, (0, 255, 0))
+               'WAIT_GPS': (180, 180, 0),
+               'WAIT_HEADING': (180, 120, 0)}.get(decision, (0, 255, 0))
 
         # Decision banner
         label = decision if tx is None else f"{decision}  {f'{dtgt:.1f}m' if dtgt else ''}"
@@ -311,14 +315,32 @@ def _gps_loop(gps):
                     prev_lat, prev_lon = prev_fix
                     east_m, north_m = _latlon_offset_m(prev_lat, prev_lon, lat, lon)
                     moved_m = math.hypot(east_m, north_m)
-                    if moved_m >= 0.75:
+                    if moved_m >= 0.75 and nav['heading_source'] != 'imu':
                         nav['heading'] = _bearing_from_latlon(prev_lat, prev_lon, lat, lon)
                         nav['heading_valid'] = True
+                        nav['heading_source'] = 'gps'
                 nav['lat'] = lat
                 nav['lon'] = lon
                 _sync_target_from_gps_locked()
             prev_fix = (lat, lon)
         time.sleep(0.15)
+
+
+def _imu_loop(compass):
+    global _running
+    while _running:
+        try:
+            heading = compass.read_heading()
+        except Exception:
+            time.sleep(0.1)
+            continue
+
+        if heading is not None:
+            with nav_lock:
+                nav['heading'] = heading
+                nav['heading_valid'] = True
+                nav['heading_source'] = 'imu'
+        time.sleep(0.05)
 
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -761,6 +783,7 @@ let rover = {
   target_lon:null,
   heading:0,
   heading_valid:false,
+  heading_source:'unknown',
   decision:'IDLE',
   us_dist:null,
   us_hard_stop_cm:15,
@@ -778,7 +801,8 @@ const decisionColors = {
   STOP:'#b91c1c',
   ARRIVED:'#0f766e',
   UI_ONLY:'#a16207',
-  WAIT_GPS:'#a16207'
+  WAIT_GPS:'#a16207',
+  WAIT_HEADING:'#b45309'
 };
 
 function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
@@ -1071,7 +1095,7 @@ function paintState(){
 
   document.getElementById('status').textContent =
     `GPS=${fmtCoord(rover.lat, rover.lon)} | ` +
-    `Heading=${rover.heading.toFixed(0)} deg | ` +
+    `Heading=${rover.heading.toFixed(0)} deg (${rover.heading_source}) | ` +
     `Local XY=(${rover.x.toFixed(2)}m, ${rover.y.toFixed(2)}m) | ` +
     `Distance=${fmtDistance()} | ` +
     `Obstacle=${fmtObstacle()} | ` +
@@ -1125,6 +1149,7 @@ class _Handler(BaseHTTPRequestHandler):
                     'y':              nav['y'],
                     'heading':        nav['heading'],
                     'heading_valid':  nav['heading_valid'],
+                    'heading_source': nav['heading_source'],
                     'target_lat':     nav['target_lat'],
                     'target_lon':     nav['target_lon'],
                     'target_x':       nav['target_x'],
@@ -1180,9 +1205,6 @@ class _Handler(BaseHTTPRequestHandler):
                         nav['target_x'] = None
                         nav['target_y'] = None
                         _sync_target_from_gps_locked()
-                        if nav['target_x'] is not None and nav['target_y'] is not None and not nav['heading_valid']:
-                            nav['heading'] = _bearing(nav['x'], nav['y'], nav['target_x'], nav['target_y'])
-                            nav['heading_valid'] = True
                     if nav['target_x'] is None and nav['target_y'] is None:
                         nav['decision'] = 'IDLE'
                         nav['dist_to_target'] = None
@@ -1200,8 +1222,10 @@ class _Handler(BaseHTTPRequestHandler):
             with nav_lock:
                 nav['x'] = 0.0
                 nav['y'] = 0.0
-                nav['heading'] = 0.0
-                nav['heading_valid'] = False
+                if nav['heading_source'] != 'imu':
+                    nav['heading'] = 0.0
+                    nav['heading_valid'] = False
+                    nav['heading_source'] = 'unknown'
                 nav['trail'] = []
                 _sync_target_from_gps_locked()
             self.send_response(200)
@@ -1247,6 +1271,8 @@ def _drive_loop(motors, sonar):
             x, y      = nav['x'], nav['y']
             heading   = nav['heading']
             heading_valid = nav['heading_valid']
+            heading_source = nav['heading_source']
+            imu_enabled = nav['imu_enabled']
             lat, lon  = nav['lat'], nav['lon']
             target_lat = nav['target_lat']
             target_lon = nav['target_lon']
@@ -1293,8 +1319,15 @@ def _drive_loop(motors, sonar):
         with nav_lock:
             nav['dist_to_target'] = dist_to_target
             if not heading_valid:
+                if imu_enabled:
+                    nav['decision'] = 'WAIT_HEADING'
+                    nav['heading_source'] = 'unknown'
+                    motors.stop()
+                    time.sleep(interval)
+                    continue
                 nav['heading'] = bearing
                 nav['heading_valid'] = True
+                nav['heading_source'] = 'estimated'
                 heading = bearing
                 h_error = 0.0
 
@@ -1346,14 +1379,18 @@ def _drive_loop(motors, sonar):
                 if turn == 'left':
                     motors.turn_left()
                     with nav_lock:
-                        nav['heading'] = (nav['heading'] - TURN_DPS * AVOID_TURN_S) % 360
-                        nav['heading_valid'] = True
+                        if nav['heading_source'] != 'imu':
+                            nav['heading'] = (nav['heading'] - TURN_DPS * AVOID_TURN_S) % 360
+                            nav['heading_valid'] = True
+                            nav['heading_source'] = 'estimated'
                         nav['decision'] = 'TURN'
                 else:
                     motors.turn_right()
                     with nav_lock:
-                        nav['heading'] = (nav['heading'] + TURN_DPS * AVOID_TURN_S) % 360
-                        nav['heading_valid'] = True
+                        if nav['heading_source'] != 'imu':
+                            nav['heading'] = (nav['heading'] + TURN_DPS * AVOID_TURN_S) % 360
+                            nav['heading_valid'] = True
+                            nav['heading_source'] = 'estimated'
                         nav['decision'] = 'TURN'
 
                 time.sleep(AVOID_TURN_S)
@@ -1374,14 +1411,18 @@ def _drive_loop(motors, sonar):
             if h_error < 0:
                 motors.turn_left()
                 with nav_lock:
-                    nav['heading'] = (nav['heading'] - TURN_DPS * dt) % 360
-                    nav['heading_valid'] = True
+                    if nav['heading_source'] != 'imu':
+                        nav['heading'] = (nav['heading'] - TURN_DPS * dt) % 360
+                        nav['heading_valid'] = True
+                        nav['heading_source'] = 'estimated'
                     nav['decision'] = 'TURN'
             else:
                 motors.turn_right()
                 with nav_lock:
-                    nav['heading'] = (nav['heading'] + TURN_DPS * dt) % 360
-                    nav['heading_valid'] = True
+                    if nav['heading_source'] != 'imu':
+                        nav['heading'] = (nav['heading'] + TURN_DPS * dt) % 360
+                        nav['heading_valid'] = True
+                        nav['heading_source'] = 'estimated'
                     nav['decision'] = 'TURN'
             time.sleep(interval)
             last_time = time.monotonic()
@@ -1441,6 +1482,17 @@ def main():
         gps = None
         print(f"GPS: unavailable ({exc})")
 
+    try:
+        compass = MPU9250Compass()
+        with nav_lock:
+            nav['imu_enabled'] = True
+        print(f"Heading IMU: OK (MPU-9250 magnetometer at 0x{compass.address:02X})")
+    except Exception as exc:
+        compass = None
+        with nav_lock:
+            nav['imu_enabled'] = False
+        print(f"Heading IMU: unavailable ({exc})")
+
     cap = cv2.VideoCapture(CAMERA_INDEX)
     if cap.isOpened():
         for _ in range(5):
@@ -1453,6 +1505,8 @@ def main():
         Thread(target=_sweep_loop,  args=(motors, sonar), daemon=True).start()
     if gps is not None:
         Thread(target=_gps_loop, args=(gps,), daemon=True).start()
+    if compass is not None:
+        Thread(target=_imu_loop, args=(compass,), daemon=True).start()
     Thread(target=_camera_loop, args=(cap,),           daemon=True).start()
 
     server = ThreadingHTTPServer(('0.0.0.0', PORT), _Handler)
@@ -1481,6 +1535,8 @@ def main():
         sonar.close()
         if gps is not None:
             gps.close()
+        if compass is not None:
+            compass.close()
         cap.release()
         server.shutdown()
         print("\nStopped.")

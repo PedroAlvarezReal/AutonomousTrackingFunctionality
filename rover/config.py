@@ -43,6 +43,25 @@ ARDUINO_BAUD_RATE   = 9600
 PIN_TRIG = 579  # GPIO_32 → pin 29  (547 + 32)
 PIN_ECHO = 580  # GPIO_33 → pin 31  (547 + 33, ECHO stepped down to 3.3 V via 1 kΩ + 2 kΩ divider)
 
+# ─── MPU-9250 compass heading ────────────────────────────────────────────────
+# Wiring:
+#   VCC -> Pin 1  (3V3)
+#   GND -> Pin 14 (GND)
+#   SDA -> Pin 3  (I2C1_SDA)
+#   SCL -> Pin 5  (I2C1_SCL)
+MPU9250_I2C_BUS              = 1
+MPU9250_ADDRESS              = 0x68
+AK8963_ADDRESS               = 0x0C
+HEADING_DECLINATION_DEG      = 0.0   # set for your location if desired
+HEADING_OFFSET_DEG           = 0.0   # tweak after mounting so 0 deg = rover forward
+HEADING_SMOOTHING_ALPHA      = 0.25  # 0..1, higher = faster but noisier
+MPU9250_MAG_OFFSET_X         = 0.0   # hard-iron calibration offsets
+MPU9250_MAG_OFFSET_Y         = 0.0
+MPU9250_MAG_OFFSET_Z         = 0.0
+MPU9250_MAG_SCALE_X          = 1.0   # soft-iron scale corrections
+MPU9250_MAG_SCALE_Y          = 1.0
+MPU9250_MAG_SCALE_Z          = 1.0
+
 # ─── Phase 2: GPS navigation (out of scope for phase 1) ──────────────────────
 GPS_PORT           = '/dev/ttyHS2'
 GPS_BAUD           = 9600
