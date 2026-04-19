@@ -6,8 +6,9 @@
 
 # Ultrasonic thresholds
 ULTRASONIC_HARD_STOP_CM = 15    # below this → hard stop, no questions asked
-ULTRASONIC_WARN_CM      = 35    # 15–35 cm → slow down, still moving
+ULTRASONIC_WARN_CM      = 28    # 15–28 cm → slow down, still moving
 ULTRASONIC_TIMEOUT_S    = 0.04  # no echo received within this window → treat as obstacle (fail safe)
+ULTRASONIC_FILTER_SAMPLES = 3   # median of a few quick reads cuts false obstacle spikes
 
 # Camera / multi-method obstacle detection
 CAMERA_OBSTACLE_SCORE_THRESHOLD = 0.95  # only stop for extremely strong signals

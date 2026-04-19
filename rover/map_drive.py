@@ -26,6 +26,7 @@ from vision.ultrasonic  import UltrasonicSensor
 from config import (
     LOOP_HZ, CAMERA_INDEX,
     ULTRASONIC_HARD_STOP_CM, ULTRASONIC_WARN_CM,
+    ULTRASONIC_FILTER_SAMPLES,
     DRIVE_SPEED_FULL, DRIVE_SPEED_SLOW,
 )
 
@@ -184,6 +185,25 @@ def _clearance_value(dist):
     return -1.0 if dist is None else float(dist)
 
 
+def _read_sonar_filtered(sonar, samples=ULTRASONIC_FILTER_SAMPLES):
+    """Median-filter a few quick sonar reads to suppress one-off spikes."""
+    values = []
+    for _ in range(max(1, int(samples))):
+        dist = sonar.read_cm()
+        if dist is not None and dist > 0:
+            values.append(float(dist))
+        time.sleep(0.01)
+
+    if not values:
+        return None
+
+    values.sort()
+    mid = len(values) // 2
+    if len(values) % 2 == 1:
+        return values[mid]
+    return (values[mid - 1] + values[mid]) / 2.0
+
+
 def _set_servo_angle(motors, angle, settle_s=0.0):
     angle = int(max(0, min(180, angle)))
     with nav_lock:
@@ -216,7 +236,7 @@ def _adaptive_scan(motors, sonar):
     try:
         for angle in ADAPTIVE_SWEEP_ANGLES:
             _set_servo_angle(motors, angle, SCAN_SETTLE_S)
-            dist = sonar.read_cm()
+            dist = _read_sonar_filtered(sonar)
             readings[angle] = dist
             with nav_lock:
                 nav['sweep'][angle] = dist
@@ -241,7 +261,7 @@ def _sweep_loop(motors, sonar):
             continue
 
         _set_servo_angle(motors, CRUISE_SERVO_ANGLE)
-        dist = sonar.read_cm()
+        dist = _read_sonar_filtered(sonar)
         with nav_lock:
             nav['sweep'][CRUISE_SERVO_ANGLE] = dist
             nav['servo_angle'] = CRUISE_SERVO_ANGLE
@@ -811,7 +831,7 @@ let rover = {
   decision:'IDLE',
   us_dist:null,
   us_hard_stop_cm:15,
-  us_warn_cm:35,
+  us_warn_cm:28,
   x:0,
   y:0,
   dist_to_target:null
@@ -1391,10 +1411,13 @@ def _drive_loop(motors, sonar, heading_sensor=None):
             time.sleep(interval)
             continue
 
-        # ── Obstacle handling: fresh scan, then decide whether to turn ────────
-        if obstacle_stop or obstacle_slow:
+        # ── Obstacle handling ─────────────────────────────────────────────────
+        # Warning range should only slow the rover down. Only true close-range
+        # obstacles trigger an avoidance scan/turn, which prevents the rover
+        # from spinning when the sonar sees something around ~30 cm.
+        if obstacle_stop:
             with nav_lock:
-                nav['decision'] = 'STOP' if obstacle_stop else 'SLOW'
+                nav['decision'] = 'STOP'
 
             readings = _adaptive_scan(motors, sonar)
             center_dist = readings.get(CRUISE_SERVO_ANGLE)
@@ -1402,7 +1425,6 @@ def _drive_loop(motors, sonar, heading_sensor=None):
             turn = _choose_turn_direction(readings, preferred_turn)
             side_clear = _clearance_value(readings.get(45 if turn == 'left' else 135))
             should_turn = (
-                obstacle_stop or
                 center_clear < hard_stop_cm or
                 side_clear > center_clear + TURN_PREFERENCE_CM or
                 abs(h_error) > HEADING_TOL
@@ -1440,6 +1462,13 @@ def _drive_loop(motors, sonar, heading_sensor=None):
                 last_time = time.monotonic()
                 continue
 
+            motors.stop()
+            with nav_lock:
+                nav['decision'] = 'STOP'
+            time.sleep(interval)
+            continue
+
+        elif obstacle_slow:
             motors.drive_forward(DRIVE_SPEED_SLOW)
             spd = SLOW_MPS
             with nav_lock:
