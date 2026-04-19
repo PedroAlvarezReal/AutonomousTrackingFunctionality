@@ -167,8 +167,8 @@ def main():
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    interval     = 1.0 / LOOP_HZ
-    prev_decision = None
+    interval  = 1.0 / LOOP_HZ
+    turn_dir  = 1   # alternates: 1 = left, -1 = right
 
     try:
         while _running:
@@ -186,15 +186,30 @@ def main():
                 shared['decision'] = decision
                 shared['speed']    = speed
 
+            dist_str = f"{dist:.1f} cm" if dist is not None else "TIMEOUT"
+
             if decision == 'STOP':
+                # Back up briefly, then turn away from obstacle
+                print(f"{dist_str:<10} | OBSTACLE — backing up and turning")
+                motors.drive_backward()
+                time.sleep(0.4)
+                if turn_dir == 1:
+                    motors.turn_left()
+                    print("Turning LEFT")
+                else:
+                    motors.turn_right()
+                    print("Turning RIGHT")
+                time.sleep(0.6)
                 motors.stop()
+                turn_dir *= -1   # alternate direction each time
+                continue         # re-evaluate immediately
+
+            elif decision == 'SLOW':
+                motors.drive_forward(speed)
+                print(f"{dist_str:<10} | SLOW")
             else:
                 motors.drive_forward(speed)
-
-            if decision != prev_decision:
-                dist_str = f"{dist:.1f} cm" if dist is not None else "TIMEOUT"
-                print(f"{dist_str:<10} | {decision}  {speed}%")
-                prev_decision = decision
+                print(f"{dist_str:<10} | FORWARD")
 
             time.sleep(interval)
 
