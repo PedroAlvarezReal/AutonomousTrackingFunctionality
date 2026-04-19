@@ -31,36 +31,38 @@ const int servoPin = 6;
 
 Servo sweepServo;
 
-// ─── motor helpers (direction logic from working code) ──────────────────────
+// ── Motor orientation ─────────────────────────────────────────────────────────
+// The two rear motors are mirror-mounted so one must be logically inverted.
+// If the rover circles LEFT  → set REVERSE_MOTOR_B 1 (try this first)
+// If the rover circles RIGHT → set REVERSE_MOTOR_B 0 and REVERSE_MOTOR_A 1
+// If it still circles after either change, swap the two wires on that motor.
+#define REVERSE_MOTOR_A 0
+#define REVERSE_MOTOR_B 1
+
+// Macro: resolve actual HIGH/LOW for a pin given inversion flag
+#define PIN_A(a, b, rev) digitalWrite(in1, (rev) ? (b) : (a)); digitalWrite(in2, (rev) ? (a) : (b))
+#define PIN_B(a, b, rev) digitalWrite(in3, (rev) ? (b) : (a)); digitalWrite(in4, (rev) ? (a) : (b))
 
 void driveForward() {
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, HIGH);
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
+  PIN_A(LOW,  HIGH, REVERSE_MOTOR_A);
+  PIN_B(HIGH, LOW,  REVERSE_MOTOR_B);
 }
 
 void driveBackward() {
-  digitalWrite(in1, HIGH);
-  digitalWrite(in2, LOW);
-  digitalWrite(in3, LOW);
-  digitalWrite(in4, HIGH);
+  PIN_A(HIGH, LOW,  REVERSE_MOTOR_A);
+  PIN_B(LOW,  HIGH, REVERSE_MOTOR_B);
 }
 
 void turnLeft() {
   // Left motor backward, right motor forward
-  digitalWrite(in1, HIGH);
-  digitalWrite(in2, LOW);
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
+  PIN_A(HIGH, LOW,  REVERSE_MOTOR_A);
+  PIN_B(HIGH, LOW,  REVERSE_MOTOR_B);
 }
 
 void turnRight() {
   // Left motor forward, right motor backward
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, HIGH);
-  digitalWrite(in3, LOW);
-  digitalWrite(in4, HIGH);
+  PIN_A(LOW,  HIGH, REVERSE_MOTOR_A);
+  PIN_B(LOW,  HIGH, REVERSE_MOTOR_B);
 }
 
 void stopMotors() {
