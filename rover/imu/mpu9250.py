@@ -7,7 +7,9 @@ course-over-ground which only becomes useful after the rover has moved.
 
 from __future__ import annotations
 
+import glob
 import math
+import os
 import time
 
 try:
@@ -22,6 +24,7 @@ from config import (
     HEADING_SMOOTHING_ALPHA,
     MPU9250_ADDRESS,
     MPU9250_I2C_BUS,
+    MPU9250_I2C_BUS_CANDIDATES,
     MPU9250_MAG_OFFSET_X,
     MPU9250_MAG_OFFSET_Y,
     MPU9250_MAG_OFFSET_Z,
@@ -48,7 +51,8 @@ class MPU9250Compass:
     AK_ASAX = 0x10
 
     def __init__(self) -> None:
-        self._bus = SMBus(MPU9250_I2C_BUS)
+        self.bus_id = None
+        self._bus = None
         self.address = None
         self._asa = (1.0, 1.0, 1.0)
         self._heading = None
@@ -91,7 +95,7 @@ class MPU9250Compass:
         return math.degrees(math.atan2(y, x)) % 360.0
 
     def _configure(self) -> None:
-        self.address = self._detect_mpu_address()
+        self.bus_id, self._bus, self.address = self._detect_mpu()
 
         # Wake the MPU-9250 and put auxiliary I2C into pass-through mode.
         self._write_mpu(self.MPU_PWR_MGMT_1, 0x00)
@@ -128,27 +132,62 @@ class MPU9250Compass:
         self._write_mag(self.AK_CNTL1, 0x16)
         time.sleep(0.01)
 
-    def _detect_mpu_address(self) -> int:
+    def _candidate_buses(self) -> list[int]:
+        candidates = []
+        for bus_id in MPU9250_I2C_BUS_CANDIDATES:
+            if bus_id not in candidates:
+                candidates.append(bus_id)
+        if MPU9250_I2C_BUS not in candidates:
+            candidates.insert(0, MPU9250_I2C_BUS)
+
+        for path in sorted(glob.glob("/dev/i2c-*")):
+            try:
+                bus_id = int(path.rsplit("-", 1)[1])
+            except ValueError:
+                continue
+            if bus_id not in candidates:
+                candidates.append(bus_id)
+        return candidates
+
+    def _detect_mpu(self) -> tuple[int, SMBus, int]:
         candidates = []
         for address in (MPU9250_ADDRESS, 0x69, 0x68):
             if address not in candidates:
                 candidates.append(address)
 
-        for address in candidates:
-            try:
-                who_am_i = self._bus.read_byte_data(address, self.MPU_WHO_AM_I)
-            except OSError:
+        last_error = None
+        tried_pairs = []
+        for bus_id in self._candidate_buses():
+            if not os.path.exists(f"/dev/i2c-{bus_id}"):
                 continue
-            if who_am_i in (0x71, 0x73):
-                return address
-            raise RuntimeError(
-                f"I2C device answered at 0x{address:02X}, but WHO_AM_I was 0x{who_am_i:02X} instead of 0x71/0x73."
-            )
+            try:
+                bus = SMBus(bus_id)
+            except Exception as exc:
+                last_error = exc
+                continue
 
-        tried = ", ".join(f"0x{address:02X}" for address in candidates)
+            for address in candidates:
+                tried_pairs.append(f"/dev/i2c-{bus_id}@0x{address:02X}")
+                try:
+                    who_am_i = bus.read_byte_data(address, self.MPU_WHO_AM_I)
+                except OSError as exc:
+                    last_error = exc
+                    continue
+                if who_am_i in (0x71, 0x73):
+                    return bus_id, bus, address
+                bus.close()
+                raise RuntimeError(
+                    f"I2C device answered on /dev/i2c-{bus_id} at 0x{address:02X}, "
+                    f"but WHO_AM_I was 0x{who_am_i:02X} instead of 0x71/0x73."
+                )
+
+            bus.close()
+
+        tried = ", ".join(tried_pairs) if tried_pairs else f"/dev/i2c-{MPU9250_I2C_BUS}@0x68/0x69"
+        extra = f" Last error: {last_error}" if last_error is not None else ""
         raise RuntimeError(
-            f"No MPU-9250 found on /dev/i2c-{MPU9250_I2C_BUS}. Tried addresses {tried}. "
-            f"Run `i2cdetect -a -y -r {MPU9250_I2C_BUS}` on the rover to see what is actually present."
+            f"No MPU-9250 found. Tried {tried}.{extra} "
+            f"Run `i2cdetect -a -y -r 0`, `1`, and `9` on the rover to see what is actually present."
         )
 
     def read_heading(self) -> float | None:

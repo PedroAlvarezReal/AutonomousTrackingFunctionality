@@ -50,6 +50,7 @@ PIN_ECHO = 580  # GPIO_33 → pin 31  (547 + 33, ECHO stepped down to 3.3 V via 
 #   SDA -> Pin 3  (I2C1_SDA)
 #   SCL -> Pin 5  (I2C1_SCL)
 MPU9250_I2C_BUS              = 1
+MPU9250_I2C_BUS_CANDIDATES   = (1, 0, 9)
 MPU9250_ADDRESS              = 0x68
 AK8963_ADDRESS               = 0x0C
 HEADING_DECLINATION_DEG      = 0.0   # set for your location if desired

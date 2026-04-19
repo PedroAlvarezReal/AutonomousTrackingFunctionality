@@ -1486,7 +1486,10 @@ def main():
         compass = MPU9250Compass()
         with nav_lock:
             nav['imu_enabled'] = True
-        print(f"Heading IMU: OK (MPU-9250 magnetometer at 0x{compass.address:02X})")
+        print(
+            f"Heading IMU: OK (MPU-9250 magnetometer on /dev/i2c-{compass.bus_id} "
+            f"at 0x{compass.address:02X})"
+        )
     except Exception as exc:
         compass = None
         with nav_lock:
