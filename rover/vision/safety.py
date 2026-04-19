@@ -54,36 +54,21 @@ class SafetyMonitor:
 
         combined_score = scores['combined'] if scores else 0.0
 
-        # ── RULE 1: Ultrasonic emergency brake ───────────────────────────────
+        # ── RULE 1: Ultrasonic emergency brake (only ultrasonic can STOP) ───
         # Timeout (None) = sensor unreliable, ignore it and rely on camera
         if distance is not None and distance < ULTRASONIC_HARD_STOP_CM:
             return distance, scores, Decision.STOP, 0
 
-        # ── Boost camera score when ultrasonic says something is near ────────
-        # If ultrasonic reads 30–60 cm and camera score is borderline,
-        # the proximity makes us more confident it's real
-        if distance is not None and distance < ULTRASONIC_WARN_CM:
-            # Scale boost: closer = bigger boost (up to 1.5x at 25 cm)
-            proximity_factor = 1.0 + 0.5 * (1.0 - (distance - ULTRASONIC_HARD_STOP_CM)
-                                              / (ULTRASONIC_WARN_CM - ULTRASONIC_HARD_STOP_CM))
-            boosted_score = min(1.0, combined_score * proximity_factor)
-        else:
-            boosted_score = combined_score
-
-        # ── RULE 2: Ultrasonic warn zone + camera confirms → STOP ────────────
-        if distance is not None and distance < ULTRASONIC_WARN_CM and boosted_score > CAMERA_OBSTACLE_SCORE_THRESHOLD:
-            return distance, scores, Decision.STOP, 0
-
-        # ── RULE 3: Ultrasonic warn zone + camera clear → SLOW ───────────────
+        # ── RULE 2: Ultrasonic warn zone (25–60cm) → SLOW, regardless of camera ──
         if distance is not None and distance < ULTRASONIC_WARN_CM:
             return distance, scores, Decision.SLOW, DRIVE_SPEED_SLOW
 
-        # ── RULE 4: Camera sees obstacle even though ultrasonic reads far ────
-        # Camera has wider FOV — it might catch something the narrow beam misses
+        # ── RULE 3: Camera sees obstacle even though ultrasonic reads far ────
+        # Camera can only cause SLOW, never STOP
         if camera_obstacle:
             return distance, scores, Decision.SLOW, DRIVE_SPEED_SLOW
 
-        # ── RULE 5: Both clear → full speed ──────────────────────────────────
+        # ── RULE 4: Both clear → full speed ──────────────────────────────────
         return distance, scores, Decision.CLEAR, DRIVE_SPEED_FULL
 
     def close(self) -> None:
