@@ -87,7 +87,7 @@ void setup() {
   digitalWrite(enB, HIGH);
 
   sweepServo.attach(servoPin);
-  sweepServo.write(0);  // center (straight ahead)
+  sweepServo.write(90);  // center (straight ahead)
 
   stopMotors();
   Serial.println("READY");

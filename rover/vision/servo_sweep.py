@@ -19,7 +19,7 @@ class ServoSweep:
     def __init__(self, motor_ctrl: MotorController, ultrasonic: UltrasonicSensor):
         self.motor = motor_ctrl
         self.us = ultrasonic
-        self._current_angle = 0
+        self._current_angle = 90
 
     # ── low-level ────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ class ServoSweep:
         time.sleep(SETTLE_TIME)
 
     def center(self):
-        self.set_angle(0)
+        self.set_angle(90)
 
     # ── sweep ────────────────────────────────────────────────────────────
 
@@ -65,6 +65,6 @@ class ServoSweep:
         """
         valid = {a: d for a, d in readings.items() if d is not None}
         if not valid:
-            return 0, None
+            return 90, None
         best = max(valid, key=valid.get)
         return best, valid[best]

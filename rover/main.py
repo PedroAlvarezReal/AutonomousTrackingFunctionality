@@ -62,23 +62,23 @@ def _scan_and_turn(motors: MotorController, sweep: ServoSweep) -> None:
 
     best_angle, best_dist = sweep.best_direction(readings)
 
-    if best_angle < 30:
+    if best_angle < 60:
+        # Best clearance is to the left
+        print(f"↩️  Turning LEFT (best at {best_angle}°, {best_dist} cm)")
+        motors.turn_left()
+        time.sleep(TURN_DURATION)
+    elif best_angle > 120:
+        # Best clearance is to the right
+        print(f"↪️  Turning RIGHT (best at {best_angle}°, {best_dist} cm)")
+        motors.turn_right()
+        time.sleep(TURN_DURATION)
+    else:
         # Best clearance is straight ahead — back up and try left
         print("⬅️  Forward blocked too — backing up and turning left")
         motors.drive_backward()
         time.sleep(0.5)
         motors.turn_left()
         time.sleep(TURN_DURATION)
-    elif best_angle <= 90:
-        # Best clearance is to the right
-        print(f"↪️  Turning RIGHT (best at {best_angle}°, {best_dist} cm)")
-        motors.turn_right()
-        time.sleep(TURN_DURATION)
-    else:
-        # Best clearance is far right — bigger turn
-        print(f"↪️  Turning HARD RIGHT (best at {best_angle}°, {best_dist} cm)")
-        motors.turn_right()
-        time.sleep(TURN_DURATION * 1.5)
 
     motors.stop()
 
@@ -169,7 +169,7 @@ def main() -> None:
             time.sleep(interval)
 
     finally:
-        motors.send_command("V0")  # re-center servo (straight ahead)
+        motors.send_command("V90")  # re-center servo (straight ahead)
         motors.stop()
         motors.close()
         if monitor:
