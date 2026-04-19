@@ -40,7 +40,7 @@ frame_lock = Lock()
 # Shared sensor state
 sensor_data = {
     'distance': None,
-    'servo_angle': 90,
+    'servo_angle': 0,
     'decision': 'INIT',
 }
 sensor_lock = Lock()
@@ -154,7 +154,7 @@ def compute_decision(dist, scores):
 
 def sensor_loop(arduino_ser, ultrasonic):
     """Read ultrasonic + do periodic mini-sweeps."""
-    angles = [90]  # Just forward for now; expand to sweep if desired
+    angles = [0]  # 0° = straight ahead; expand to sweep if desired
     idx = 0
 
     while True:
@@ -270,7 +270,7 @@ def main():
     arduino_ser = serial.Serial(ARDUINO_SERIAL_PORT, ARDUINO_BAUD_RATE, timeout=1)
     time.sleep(2)
     arduino_ser.reset_input_buffer()
-    arduino_ser.write(b"V90\n")  # center servo
+    arduino_ser.write(b"V0\n")  # center servo (straight ahead)
     print("Arduino ready.")
 
     # Init ultrasonic
@@ -305,7 +305,7 @@ def main():
         print("\nStopping...")
         server.shutdown()
     finally:
-        arduino_ser.write(b"V90\n")
+        arduino_ser.write(b"V0\n")
         arduino_ser.close()
         if ultrasonic:
             ultrasonic.close()

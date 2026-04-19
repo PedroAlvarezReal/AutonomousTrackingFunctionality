@@ -7,7 +7,8 @@ from rover.vision.ultrasonic import UltrasonicSensor
 
 log = logging.getLogger(__name__)
 
-# Angles to scan (degrees): far-right → center → far-left
+# Angles to scan (degrees): center(forward) → right → far-right
+# 0° = straight ahead, 90° = right, 180° = behind-right
 SWEEP_ANGLES = [0, 45, 90, 135, 180]
 SETTLE_TIME  = 0.3  # seconds for servo to reach position
 
@@ -18,7 +19,7 @@ class ServoSweep:
     def __init__(self, motor_ctrl: MotorController, ultrasonic: UltrasonicSensor):
         self.motor = motor_ctrl
         self.us = ultrasonic
-        self._current_angle = 90
+        self._current_angle = 0
 
     # ── low-level ────────────────────────────────────────────────────────
 
@@ -30,7 +31,7 @@ class ServoSweep:
         time.sleep(SETTLE_TIME)
 
     def center(self):
-        self.set_angle(90)
+        self.set_angle(0)
 
     # ── sweep ────────────────────────────────────────────────────────────
 
@@ -55,7 +56,7 @@ class ServoSweep:
 
     def quick_scan(self):
         """3-point scan: left-center-right.  Fastest useful scan."""
-        return self.sweep([0, 90, 180])
+        return self.sweep([0, 90, 180])  # forward, right, far-right
 
     def best_direction(self, readings: dict):
         """Pick the angle with the most clearance.
@@ -64,6 +65,6 @@ class ServoSweep:
         """
         valid = {a: d for a, d in readings.items() if d is not None}
         if not valid:
-            return 90, None
+            return 0, None
         best = max(valid, key=valid.get)
         return best, valid[best]
