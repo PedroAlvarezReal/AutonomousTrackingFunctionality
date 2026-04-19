@@ -150,7 +150,7 @@ class _StreamHandler(BaseHTTPRequestHandler):
 </style></head><body>
   <h1>Straight Drive Test</h1>
   <p>Green = CLEAR full speed | Orange = SLOW | Red = STOP (waiting)</p>
-  <p>No turning — straight movement + sensor validation only</p>
+  <p>No turning - straight movement + sensor validation only</p>
   <img src="/stream"/>
 </body></html>""")
         elif self.path == "/stream":
